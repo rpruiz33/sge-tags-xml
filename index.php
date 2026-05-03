@@ -238,8 +238,7 @@ class DocxParser
         $meta['issn_epub'] = $issns[0][1] ?? '';
 
         // DOI
-        if (preg_match('/10\.\d{4,9}\/[^\s\)\]\.,]+/', $text, $m))
-            $meta['doi'] = rtrim($m[0], '.,)');
+        $meta['doi'] = $this->extractDoiFromLines($lines);
 
         // Revista (deteccion generica; evita valores fijos por revista)
         foreach (array_slice($lines, 0, 30) as $l) {
@@ -413,13 +412,129 @@ class DocxParser
         return ['day'=>'','month'=>'','year'=>$y[0]??''];
     }
 
+    private function extractDoiFromLines(array $lines): string
+    {
+        $patterns = [
+            '~https?://(?:dx\.)?doi\.org/(10\.\d{4,9}/[^\s<>"]+)~iu',
+            '~\bdoi\s*[:\-]?\s*(10\.\d{4,9}/[^\s<>"]+)~iu',
+            '~\b(10\.\d{4,9}/[^\s<>"]+)~iu',
+        ];
+
+        $fallback = '';
+        $inReferences = false;
+
+        foreach ($lines as $line) {
+            $current = trim(html_entity_decode((string)$line, ENT_QUOTES | ENT_XML1, 'UTF-8'));
+            if ($current === '') {
+                continue;
+            }
+
+            if (preg_match('/^(referencias|bibliograf[ií]a|references|refer[êe]ncias)\b/iu', $current)) {
+                $inReferences = true;
+                continue;
+            }
+
+            foreach ($patterns as $pattern) {
+                if (!preg_match_all($pattern, $current, $matches, PREG_SET_ORDER)) {
+                    continue;
+                }
+
+                foreach ($matches as $match) {
+                    $doi = trim($match[1] ?? $match[0]);
+                    $doi = preg_replace('/\s+/u', '', $doi);
+                    $doi = rtrim($doi, ".,;:)]}>");
+
+                    if (!preg_match('~^10\.\d{4,9}/.+$~', $doi)) {
+                        continue;
+                    }
+                    if (stripos($doi, 'issn') !== false) {
+                        continue;
+                    }
+                    if (preg_match('~^10\.\d{4,9}/\.~', $doi)) {
+                        continue;
+                    }
+
+                    if (!$inReferences) {
+                        return $doi;
+                    }
+
+                    if ($fallback === '') {
+                        $fallback = $doi;
+                    }
+                }
+            }
+        }
+
+        if ($fallback !== '') {
+            return $fallback;
+        }
+
+        $normalized = html_entity_decode(implode("\n", $lines), ENT_QUOTES | ENT_XML1, 'UTF-8');
+        $normalized = str_replace('\\/', '/', $normalized);
+        $normalized = preg_replace('/\s+/u', ' ', $normalized);
+
+        if (preg_match_all('~(?:https?://(?:dx\.)?doi\.org/|doi\s*[:\-]?\s*)?(10\.\d{4,9}/[^\s<>"]+)~iu', $normalized, $allMatches, PREG_SET_ORDER)) {
+            foreach ($allMatches as $match) {
+                $doi = trim($match[1] ?? $match[0]);
+                $doi = preg_replace('/\s+/u', '', $doi);
+                $doi = rtrim($doi, ".,;:)]}>");
+                if (preg_match('~^10\.\d{4,9}/.+$~', $doi) && stripos($doi, 'issn') === false && !preg_match('~^10\.\d{4,9}/\.~', $doi)) {
+                    return $doi;
+                }
+            }
+        }
+
+        return '';
+    }
+
+    private function extractDoi(string $text): string
+    {
+        if (!$text) return '';
+
+        $normalized = html_entity_decode($text, ENT_QUOTES | ENT_XML1, 'UTF-8');
+        $normalized = str_replace('\\/', '/', $normalized);
+        $normalized = preg_replace('/\s+/u', ' ', $normalized);
+
+        $patterns = [
+            '~https?://(?:dx\.)?doi\.org/(10\.\d{4,9}/[^\s<>"]+)~iu',
+            '~\bdoi\s*[:\-]?\s*(10\.\d{4,9}/[^\s<>"]+)~iu',
+            '~\b(10\.\d{4,9}/[^\s<>"]+)~iu',
+        ];
+
+        foreach ($patterns as $pattern) {
+            if (!preg_match_all($pattern, $normalized, $matches, PREG_SET_ORDER)) {
+                continue;
+            }
+
+            foreach ($matches as $match) {
+                $doi = trim($match[1] ?? $match[0]);
+                $doi = preg_replace('/\s+/u', '', $doi);
+                $doi = rtrim($doi, ".,;:)]}>");
+
+                if (!preg_match('~^10\.\d{4,9}/.+$~', $doi)) {
+                    continue;
+                }
+                if (stripos($doi, 'issn') !== false) {
+                    continue;
+                }
+                if (preg_match('~^10\.\d{4,9}/\.~', $doi)) {
+                    continue;
+                }
+
+                return $doi;
+            }
+        }
+
+        return '';
+    }
+
     public function buildJatsXml(array $meta): string
     {
         $e = fn($s) => htmlspecialchars((string)$s, ENT_XML1|ENT_QUOTES, 'UTF-8');
         $rec = $this->parseDate($meta['received'] ?? '');
         $rev = $this->parseDate($meta['revised'] ?? '');
         $acc = $this->parseDate($meta['accepted'] ?? '');
-        $doiClean = rtrim($meta['doi'] ?? '', '. ');
+        $doiClean = rtrim((string)($meta['doi'] ?? ''), ".,;:)]}> ");
         $pubId    = $doiClean ? (explode('/', $doiClean)[1] ?? 'XXXX') : 'XXXX';
         $year     = $acc['year'] ?: date('Y');
         $sps      = $meta['sps'] ?: 'sps-1.9';
