@@ -78,9 +78,7 @@ async function showPatternFrontOnly() {
   }
 }
 
-window.addEventListener('DOMContentLoaded', () => {
-  showPatternFrontOnly();
-});
+// No auto-load pattern.xml; keep it as an optional manual action.
 
 // ── Drag & drop ───────────────────────────────────────────────────────────────
 dropZone.addEventListener('click', () => fileInput.click());
@@ -167,32 +165,38 @@ async function convert() {
   generatedXml = '';
 
   setStep(2);
-  setProgress(15, 'Cargando patrón XML...');
+  setProgress(15, 'Subiendo archivo...');
 
   try {
-    const raw = await loadPatternXml();
-    if (!raw) {
-      throw new Error('No hay XML patrón disponible.');
+    const form = new FormData();
+    form.append('file', currentFile);
+
+    const resp = await fetch('convert.php', {
+      method: 'POST',
+      body: form
+    });
+
+    const data = await resp.json();
+    if (!resp.ok || !data.success) {
+      throw new Error(data.error || 'No se pudo convertir el archivo');
     }
 
-    setProgress(60, 'Autopoblando formulario...');
-    await delay(120);
+    setProgress(70, 'Generando XML...');
 
-    generatedXml = raw;
-    generatedFilename = 'patron_scielo_article';
+    generatedXml = data.xml || '';
+    generatedFilename = data.filename || 'documento';
     xmlOutput.textContent = generatedXml;
     resultPanel.classList.remove('hidden');
 
-    try {
-      populateFormFromPattern(raw);
-    } catch (err) {
-      console.warn('No se pudo autopoblar desde el patrón:', err);
+    if (data.metadata) {
+      renderMetadata(data.metadata);
+      metaPanel.classList.remove('hidden');
     }
 
     setStep(3);
     setProgress(100, 'Listo');
     setStep(4);
-    showAlert('✅ XML patrón cargado correctamente.', 'success');
+    showAlert('✅ XML generado desde el Word.', 'success');
     setTimeout(() => resultPanel.scrollIntoView({ behavior: 'smooth', block: 'start' }), 150);
 
   } catch (err) {
@@ -353,52 +357,10 @@ function populateFormFromPattern(xmlString) {
   metaPanel.classList.remove('hidden');
 }
 
-  // ── Generar XML desde metadatos manuales — usa el XML patrón completo si está presente
+  // ── Generar XML desde metadatos manuales
   if (generateManualBtn) {
     generateManualBtn.addEventListener('click', async () => {
-      // Si existe un patrón XML embebido, usarlo tal cual (usuario pidió que quede exactamente como el patrón)
-      const rawPattern = patternXmlField ? patternXmlField.value.trim() : '';
-      if (rawPattern) {
-        generatedXml = rawPattern;
-        generatedFilename = 'patron_scielo_article';
-        xmlOutput.textContent = generatedXml;
-        resultPanel.classList.remove('hidden');
-        metaPanel.classList.add('hidden');
-        setStep(4);
-        showAlert('Patrón XML cargado en el visor. Podés descargarlo o copiarlo.', 'success');
-        resultPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        return;
-      }
-
-      // Si no hay patrón, caer en la generación por metadatos (comportamiento anterior)
-      const meta = {};
-      meta['doi'] = manualDoi.value.trim();
-      meta['received'] = '';
-      meta['revised'] = '';
-      meta['accepted'] = '';
-      const day = manualPubDay.value.trim();
-      const month = manualPubMonth.value.trim();
-      const year = manualPubYear.value.trim();
-      if (day || month || year) meta['pubdate'] = `${day} ${month} ${year}`.trim();
-      meta['volume'] = manualVolume.value.trim();
-      meta['elocation-id'] = manualEloc.value.trim();
-      meta['funding'] = manualFunding.value ? manualFunding.value.split(';').map(s=>s.trim()) : [];
-      meta['conflict'] = manualConflict.value.trim();
-      meta['contributions'] = manualContrib.value ? [manualContrib.value.trim()] : [];
-      meta['authors'] = [
-        { name: 'Melisse Eich', orcid: '0000-0001-8382-1354' },
-        { name: 'Marta Verdi', orcid: '0000-0001-7090-9541' },
-        { name: 'Pedro Paulo Scremin Martins', orcid: '0000-0003-2641-8563' },
-        { name: 'Mirelle Finkler', orcid: '0000-0001-5764-9183' }
-      ];
-      meta['affiliations'] = [
-        'Posdoctoranda, Programa de Pós-graduação em Saúde Coletiva, Universidade Federal de Santa Catarina. meliseeich@hotmail.com',
-        'Doctora en Enfermería, Programa de Pós-Graduação em Saúde Coletiva, Universidade Federal de Santa Catarina. verdiufsc@gmail.com',
-        'Estudiante, Doctorado em Saúde Coletiva, Universidade Federal de Santa Catarina. ppsm29@hotmail.com',
-        'Doctora en Odontología, Departamento de Odontologia, Universidade Federal de Santa Catarina. mirellefinkler@yahoo.com.br'
-      ];
-      meta['articleTitle'] = document.title || 'Artículo desde metadatos manuales';
-      meta['articleTitleEn'] = '';
+      const meta = collectManualMeta();
 
       // Generación completamente en el cliente
       setStep(2);
@@ -423,6 +385,66 @@ function populateFormFromPattern(xmlString) {
       }
     });
   }
+
+// Construye el objeto meta desde el formulario manual
+function collectManualMeta() {
+  const meta = {};
+  meta['doi'] = manualDoi.value.trim();
+  meta['received'] = '';
+  meta['revised'] = '';
+  meta['accepted'] = '';
+  const day = manualPubDay.value.trim();
+  const month = manualPubMonth.value.trim();
+  const year = manualPubYear.value.trim();
+  if (day || month || year) meta['pubdate'] = `${day} ${month} ${year}`.trim();
+  meta['volume'] = manualVolume.value.trim();
+  meta['elocation-id'] = manualEloc.value.trim();
+  meta['funding'] = manualFunding.value ? manualFunding.value.split(';').map(s=>s.trim()).filter(Boolean) : [];
+  meta['conflict'] = manualConflict.value.trim();
+  meta['contributions'] = manualContrib.value ? [manualContrib.value.trim()] : [];
+  meta['authors'] = collectManualAuthors();
+  const aff = document.getElementById('manualAff')?.value?.trim() || '';
+  meta['affiliations'] = aff ? [aff] : [];
+  meta['articleTitle'] = document.title || 'Artículo desde metadatos manuales';
+  meta['articleTitleEn'] = '';
+  return meta;
+}
+
+function collectManualAuthors() {
+  const list = document.querySelectorAll('.manual-authors li');
+  const authors = [];
+  list.forEach(li => {
+    const a = li.querySelector('a');
+    const orcid = a ? a.getAttribute('href') || '' : '';
+    const text = (li.textContent || '').replace(/\s+—\s+.*/,'').trim();
+    const name = text.replace(/\s+\d+$/, '').trim();
+    if (name) authors.push({ name, orcid: orcid.replace('https://orcid.org/','') });
+  });
+  return authors;
+}
+
+// Refrescar XML al editar metadatos manuales (cuando ya hay salida visible)
+const manualInputs = [
+  manualDoi, manualPubDay, manualPubMonth, manualPubYear,
+  manualVolume, manualEloc, manualFunding, manualConflict, manualContrib,
+  document.getElementById('manualAff')
+].filter(Boolean);
+
+manualInputs.forEach(input => {
+  input.addEventListener('input', () => {
+    if (!resultPanel || resultPanel.classList.contains('hidden')) return;
+    const meta = collectManualMeta();
+    try {
+      generatedXml = buildJatsFromMeta(meta);
+      generatedFilename = (meta.articleTitle || 'manual').replace(/[^a-z0-9]+/gi, '_').substring(0,80) + '_JATS_SPS19';
+      xmlOutput.textContent = generatedXml;
+      renderMetadata(meta);
+      metaPanel.classList.remove('hidden');
+    } catch (_) {
+      // no alert spam while typing
+    }
+  });
+});
 
 // Construye un JATS XML simple a partir del objeto meta (cliente)
 function buildJatsFromMeta(meta) {
@@ -550,7 +572,7 @@ function buildJatsFromMeta(meta) {
   }
   back += `    <ref-list>\n      <title>Referencias bibliográficas</title>\n      <ref id="B1">\n        <label>1</label>\n        <element-citation publication-type="journal">\n          <comment>[Completar referencias en formato JATS element-citation]</comment>\n        </element-citation>\n      </ref>\n    </ref-list>\n  </back>\n`;
 
-  const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE article PUBLIC "-//NLM//DTD JATS (Z39.96) Journal Publishing DTD v1.1 20121330//EN"\n  "https://jats.nlm.nih.gov/publishing/1.1/JATS-journalpublishing1-1.dtd">\n<article dtd-version="1.1" article-type="research-article" specific-use="sps-1.9" xml:lang="${e(meta.lang||'es')}">\n\n  <front>\n${journalMeta}\n\n${articleMeta}\n  </front>\n\n${body}\n${back}`;
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE article PUBLIC "-//NLM//DTD JATS (Z39.96) Journal Publishing DTD v1.1 20121330//EN"\n  "https://jats.nlm.nih.gov/publishing/1.1/JATS-journalpublishing1-1.dtd">\n<article dtd-version="1.1" article-type="research-article" specific-use="sps-1.9" xml:lang="${e(meta.lang||'es')}" xmlns:xlink="http://www.w3.org/1999/xlink">\n\n  <front>\n${journalMeta}\n\n${articleMeta}\n  </front>\n\n${body}\n${back}`;
 
   return xml;
 }

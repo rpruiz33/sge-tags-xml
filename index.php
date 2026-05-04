@@ -181,6 +181,6 @@
   <span>Sin dependencias externas</span>
 </footer>
 
-<script src="js/app.js"></script>
+<script src="js/app.js?v=20260504"></script>
 </body>
 </html>

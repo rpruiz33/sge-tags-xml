@@ -1,0 +1,744 @@
+<?php
+
+class DocxParser
+{
+    private $filePath;
+
+    public function __construct($filePath)
+    {
+        $this->filePath = $filePath;
+    }
+
+    public function extractLines()
+    {
+        if (!is_file($this->filePath)) {
+            return [];
+        }
+
+        $zip = new ZipArchive();
+        if ($zip->open($this->filePath) !== true) {
+            return [];
+        }
+
+        $xmlContent = $zip->getFromName('word/document.xml');
+        $zip->close();
+
+        if ($xmlContent === false || $xmlContent === '') {
+            return [];
+        }
+
+        $dom = new DOMDocument();
+        $dom->loadXML($xmlContent);
+        $xpath = new DOMXPath($dom);
+        $xpath->registerNamespace('w', 'http://schemas.openxmlformats.org/wordprocessingml/2006/main');
+
+        $lines = [];
+        foreach ($xpath->query('//w:p') as $p) {
+            $texts = [];
+            foreach ($xpath->query('.//w:t', $p) as $t) {
+                $texts[] = $t->nodeValue;
+            }
+            $line = trim(implode('', $texts));
+            if ($line !== '') {
+                $lines[] = $line;
+            }
+        }
+
+        return $lines;
+    }
+
+    public function parseMetadata(array $lines)
+    {
+        $meta = [
+            'lang' => 'es',
+            'sps' => 'sps-1.9',
+            'journalTitle' => '',
+            'journalAbbrev' => '',
+            'journalIdPublisher' => '',
+            'issn_ppub' => '',
+            'issn_epub' => '',
+            'publisher' => '',
+            'doi' => '',
+            'articleTitle' => '',
+            'articleTitleEn' => '',
+            'authors' => [],
+            'affiliations' => [],
+            'affiliations_norm' => [],
+            'affiliations_orgdiv1' => [],
+            'affiliations_orgdiv2' => [],
+            'affiliations_orgname' => [],
+            'affiliations_state' => [],
+            'affiliations_country' => [],
+            'affiliations_country_name' => [],
+            'affiliations_email' => [],
+            'abstractEs' => '',
+            'abstractEn' => '',
+            'kwdsEs' => [],
+            'kwdsEn' => [],
+            'funding' => [],
+            'fundingStatement' => '',
+            'received' => '',
+            'revised' => '',
+            'accepted' => '',
+            'volume' => '',
+            'elocation-id' => '',
+            'sections' => [],
+            'conflict' => '',
+            'contributions' => [],
+            'collectionYear' => '',
+            'refCount' => ''
+        ];
+
+        $clean = array_values(array_filter(array_map('trim', $lines), function ($v) {
+            return $v !== '';
+        }));
+
+        $monthMap = [
+            'ene' => '01', 'enero' => '01',
+            'feb' => '02', 'fev' => '02', 'febrero' => '02',
+            'mar' => '03', 'marzo' => '03',
+            'abr' => '04', 'abril' => '04',
+            'may' => '05', 'mayo' => '05',
+            'jun' => '06', 'junio' => '06',
+            'jul' => '07', 'julio' => '07',
+            'ago' => '08', 'agosto' => '08',
+            'sep' => '09', 'sept' => '09', 'septiembre' => '09',
+            'oct' => '10', 'octubre' => '10',
+            'nov' => '11', 'noviembre' => '11',
+            'dic' => '12', 'dez' => '12', 'diciembre' => '12'
+        ];
+
+        $parseDate = function ($text) use ($monthMap) {
+            $text = trim($text);
+            if (preg_match('/(\d{1,2})\s+([\p{L}.]+)\s+(\d{4})/u', $text, $m)) {
+                $day = str_pad($m[1], 2, '0', STR_PAD_LEFT);
+                $key = mb_strtolower(str_replace('.', '', $m[2]));
+                $month = $monthMap[$key] ?? '';
+                $year = $m[3];
+                if ($month) return $day . ' ' . $month . ' ' . $year;
+            }
+            return '';
+        };
+
+        // Header block (sps, lang, journal info)
+        for ($i = 0; $i < count($clean); $i++) {
+            if (preg_match('/^sps-?1\.9$/i', $clean[$i])) {
+                $meta['sps'] = $clean[$i];
+                $meta['lang'] = $clean[$i + 1] ?? $meta['lang'];
+                $meta['journalAbbrev'] = $clean[$i + 2] ?? $meta['journalAbbrev'];
+                $meta['journalIdPublisher'] = $clean[$i + 3] ?? $meta['journalIdPublisher'];
+                $meta['journalTitle'] = $clean[$i + 4] ?? $meta['journalTitle'];
+                if (empty($meta['journalAbbrev']) && !empty($clean[$i + 5])) {
+                    $meta['journalAbbrev'] = $clean[$i + 5];
+                }
+                break;
+            }
+        }
+
+        // DOI
+        foreach ($clean as $line) {
+            if (preg_match('/10\.\d{4,9}\/\S+/u', $line, $m)) {
+                $meta['doi'] = $m[0];
+                break;
+            }
+        }
+
+        // ISSN (first two matches)
+        $issns = [];
+        foreach ($clean as $line) {
+            if (preg_match_all('/\b\d{4}-\d{3}[\dxX]\b/u', $line, $m)) {
+                foreach ($m[0] as $issn) {
+                    $issns[] = $issn;
+                }
+            }
+        }
+        if (isset($issns[0])) $meta['issn_ppub'] = $issns[0];
+        if (isset($issns[1])) $meta['issn_epub'] = $issns[1];
+
+        // Publisher (line after ISSNs if present)
+        for ($i = 0; $i < count($clean); $i++) {
+            if (preg_match('/\b\d{4}-\d{3}[\dxX]\b/u', $clean[$i])) {
+                $meta['publisher'] = $clean[$i + 2] ?? $meta['publisher'];
+                break;
+            }
+        }
+
+        // Titles around DOI
+        $doiIndex = -1;
+        foreach ($clean as $i => $line) {
+            if (trim($line) === $meta['doi']) {
+                $doiIndex = $i;
+                break;
+            }
+        }
+        if ($doiIndex >= 0) {
+            for ($i = $doiIndex + 1; $i < count($clean); $i++) {
+                $line = trim($clean[$i]);
+                if ($line === '') {
+                    continue;
+                }
+                if (preg_match('/^art[ií]culo$/i', $line) || mb_strtolower($line) === 'artículo') {
+                    continue;
+                }
+                if (preg_match('/^https?:\/\/orcid\.org\//i', $line)) {
+                    continue;
+                }
+                if ($meta['articleTitle'] === '') {
+                    $meta['articleTitle'] = $line;
+                    continue;
+                }
+                if ($meta['articleTitleEn'] === '' && !preg_match('/https?:\/\/orcid\.org\//i', $line)) {
+                    $meta['articleTitleEn'] = $line;
+                }
+                break;
+            }
+        }
+
+        if ($meta['articleTitle'] === '' || preg_match('/^art[ií]culo$/i', $meta['articleTitle'])) {
+            $seenArticleLabel = false;
+            foreach ($clean as $line) {
+                $lineTrim = trim($line);
+                if ($lineTrim === '') {
+                    continue;
+                }
+                if (preg_match('/^art[ií]culo$/i', $lineTrim) || mb_strtolower($lineTrim) === 'artículo') {
+                    $seenArticleLabel = true;
+                    continue;
+                }
+                if (!$seenArticleLabel) {
+                    continue;
+                }
+                if (preg_match('/10\.\d{4,9}\//u', $lineTrim)) {
+                    continue;
+                }
+                if (preg_match('/^Resumen\s*:/i', $lineTrim) || preg_match('/^Abstract\s*:/i', $lineTrim)) {
+                    continue;
+                }
+                if (preg_match('/^Palabras\s+claves?/i', $lineTrim) || preg_match('/^Keywords\s*:/i', $lineTrim)) {
+                    continue;
+                }
+                if (preg_match('/https?:\/\/orcid\.org\//i', $lineTrim)) {
+                    continue;
+                }
+                if (mb_strlen($lineTrim) >= 40) {
+                    $meta['articleTitle'] = $lineTrim;
+                    break;
+                }
+            }
+        }
+
+        // Authors
+        foreach ($clean as $line) {
+            if (preg_match('/^(.+?)(\d+)\s+https?:\/\/orcid\.org\/(\S+)/u', $line, $m)) {
+                $name = trim($m[1]);
+                $orcid = trim($m[3]);
+                $meta['authors'][] = ['name' => $name, 'orcid' => $orcid];
+            }
+        }
+
+        // Affiliations
+        foreach ($clean as $line) {
+            $lineTrim = trim($line);
+            if ($lineTrim === '') {
+                continue;
+            }
+            if (preg_match('/10\.\d{4,9}\//u', $lineTrim)) {
+                continue;
+            }
+            if (preg_match('/\b\d{4}-\d{3}[\dxX]\b/u', $lineTrim)) {
+                continue;
+            }
+            if (preg_match('/^(\d+)\s*(.+)$/u', $lineTrim, $m)) {
+                $affText = trim($m[2]);
+                if (preg_match('/\b\d{4}-\d{3}[\dxX]\b/u', $affText)) {
+                    continue;
+                }
+                if (preg_match('/10\.\d{4,9}\//u', $affText)) {
+                    continue;
+                }
+                if (!preg_match('/[\p{L}]/u', $affText)) {
+                    continue;
+                }
+                $meta['affiliations'][] = $affText;
+
+                if (preg_match('/(Universidade[^.,;]+|Universidad[^.,;]+|University[^.,;]+)/u', $affText, $org)) {
+                    $meta['affiliations_norm'][] = trim($org[1]);
+                    $meta['affiliations_orgname'][] = trim($org[1]);
+                } else {
+                    $meta['affiliations_norm'][] = '';
+                    $meta['affiliations_orgname'][] = '';
+                }
+
+                if (preg_match('/(Departamento[^.;,]+)/u', $affText, $div)) {
+                    $meta['affiliations_orgdiv2'][] = trim($div[1]);
+                } else {
+                    $meta['affiliations_orgdiv2'][] = '';
+                }
+                if (preg_match('/(Programa[^.;,]+)/u', $affText, $div1)) {
+                    $meta['affiliations_orgdiv1'][] = trim($div1[1]);
+                } else {
+                    $meta['affiliations_orgdiv1'][] = '';
+                }
+
+                if (preg_match('/([\p{L}\s]+),\s*Brasil/u', $affText, $st)) {
+                    $state = trim($st[1]);
+                    $meta['affiliations_state'][] = $state;
+                    $meta['affiliations_country'][] = 'BR';
+                    $meta['affiliations_country_name'][] = 'Brazil';
+                } else {
+                    $meta['affiliations_state'][] = '';
+                    $meta['affiliations_country'][] = '';
+                    $meta['affiliations_country_name'][] = '';
+                }
+
+                if (preg_match('/([\w.%-]+@[\w.-]+\.[A-Za-z]{2,})/u', $affText, $em)) {
+                    $meta['affiliations_email'][] = $em[1];
+                } else {
+                    $meta['affiliations_email'][] = '';
+                }
+            }
+        }
+
+        // Abstracts, keywords, funding, conflict, contributions
+        $state = '';
+        foreach ($clean as $line) {
+            $lineTrim = trim($line);
+            if (preg_match('/^Resumen\s*:/i', $lineTrim)) {
+                $state = 'abstract_es';
+                $meta['abstractEs'] = trim(preg_replace('/^Resumen\s*:/i', '', $lineTrim));
+                continue;
+            }
+            if (preg_match('/^Abstract\s*:/i', $lineTrim)) {
+                $state = 'abstract_en';
+                $meta['abstractEn'] = trim(preg_replace('/^Abstract\s*:/i', '', $lineTrim));
+                continue;
+            }
+            if (preg_match('/^Palabras\s+claves?\s*:/i', $lineTrim)) {
+                $state = 'kwds_es';
+                $kw = trim(preg_replace('/^Palabras\s+claves?\s*:/i', '', $lineTrim));
+                if ($kw !== '') $meta['kwdsEs'] = array_filter(array_map('trim', preg_split('/[;,]/', $kw)));
+                continue;
+            }
+            if (preg_match('/^Keywords\s*:/i', $lineTrim)) {
+                $state = 'kwds_en';
+                $kw = trim(preg_replace('/^Keywords\s*:/i', '', $lineTrim));
+                if ($kw !== '') $meta['kwdsEn'] = array_filter(array_map('trim', preg_split('/[;,]/', $kw)));
+                continue;
+            }
+            if (preg_match('/^Financiamiento$/i', $lineTrim)) {
+                $state = 'funding';
+                continue;
+            }
+            if (preg_match('/^Conflicto de Intereses\s*:?(.*)$/i', $lineTrim, $mconf)) {
+                $state = 'conflict';
+                $tail = trim($mconf[1] ?? '');
+                if ($tail !== '') {
+                    $meta['conflict'] = trim($meta['conflict'] . ' ' . $tail);
+                }
+                continue;
+            }
+            if (preg_match('/^Contribuci[óo]n autoral\s*:?(.*)$/i', $lineTrim, $mcontrib)) {
+                $state = 'contrib';
+                $tail = trim($mcontrib[1] ?? '');
+                if ($tail !== '') {
+                    $meta['contributions'][] = $tail;
+                }
+                continue;
+            }
+            if (preg_match('/^Referencias bibliogr/i', $lineTrim)) {
+                $state = '';
+                continue;
+            }
+
+            if ($state === 'abstract_es') {
+                if (!preg_match('/^Palabras\s+claves?\s*:/i', $lineTrim)) {
+                    $meta['abstractEs'] = trim($meta['abstractEs'] . ' ' . $lineTrim);
+                }
+            } elseif ($state === 'abstract_en') {
+                if (!preg_match('/^Keywords\s*:/i', $lineTrim)) {
+                    $meta['abstractEn'] = trim($meta['abstractEn'] . ' ' . $lineTrim);
+                }
+            } elseif ($state === 'funding') {
+                if (!preg_match('/^Conflicto de Intereses$/i', $lineTrim)) {
+                    $meta['fundingStatement'] = trim($meta['fundingStatement'] . ' ' . $lineTrim);
+                }
+            } elseif ($state === 'conflict') {
+                if (preg_match('/Contribuci[óo]n autoral/i', $lineTrim)) {
+                    $parts = preg_split('/Contribuci[óo]n autoral/i', $lineTrim, 2);
+                    $meta['conflict'] = trim($meta['conflict'] . ' ' . ($parts[0] ?? ''));
+                    $state = 'contrib';
+                    if (!empty($parts[1])) {
+                        $meta['contributions'][] = trim($parts[1]);
+                    }
+                } else {
+                    $meta['conflict'] = trim($meta['conflict'] . ' ' . $lineTrim);
+                }
+            } elseif ($state === 'contrib') {
+                if (!preg_match('/^Referencias bibliogr/i', $lineTrim)) {
+                    $meta['contributions'][] = $lineTrim;
+                }
+            }
+        }
+
+        if ($meta['fundingStatement'] !== '') {
+            $sources = [];
+            if (preg_match_all('/(Coordena[cç][aã]o[^;]+|Funda[cç][aã]o[^;]+)/u', $meta['fundingStatement'], $m)) {
+                $sources = $m[0];
+            }
+            if (!$sources) {
+                $sources = preg_split('/;/', $meta['fundingStatement']);
+            }
+            foreach ($sources as $p) {
+                $original = trim($p);
+                if ($p === '') continue;
+                $awardId = '';
+                if (preg_match('/(\d+\/\d{4})/u', $original, $m2)) {
+                    $awardId = $m2[1];
+                }
+                $p = trim($p);
+                $p = preg_replace('/,\s*c[oó]digo de financiamiento.*$/iu', '', $p);
+                $p = preg_replace('/,\s*No\.\s*\d+\/\d{4}\.?$/iu', '', $p);
+                $p = rtrim($p, '. ');
+                $meta['funding'][] = ['source' => $p, 'awardId' => $awardId];
+            }
+        }
+
+        if ($meta['conflict'] !== '' && preg_match('/Contribuci[óo]n\s+autoral/i', $meta['conflict'])) {
+            $conflictNorm = preg_replace('/Contribuci[óo]n\s+autoral\s*:/i', 'Contribución autoral', $meta['conflict']);
+            $parts = preg_split('/Contribuci[óo]n\s+autoral/i', $conflictNorm, 2);
+            $meta['conflict'] = trim($parts[0] ?? '');
+            if (!empty($parts[1])) {
+                $meta['contributions'][] = trim($parts[1]);
+            }
+        }
+
+        // Dates
+        $refStart = -1;
+        foreach ($clean as $idx => $line) {
+            if (preg_match('/^Referencias bibliogr/i', $line)) {
+                $refStart = $idx;
+                break;
+            }
+        }
+
+        foreach ($clean as $idx => $line) {
+            $lineTrim = trim($line);
+            if ($refStart !== -1 && $idx >= $refStart) {
+                continue;
+            }
+            if (preg_match('/^Recibido\s*:/i', $lineTrim)) {
+                $d = $parseDate(preg_replace('/^Recibido\s*:/i', '', $lineTrim));
+                if ($d) $meta['received'] = $d;
+            }
+            if (preg_match('/Versi[oó]n\s+final\s*:/i', $lineTrim)) {
+                $d = $parseDate(preg_replace('/.*Versi[oó]n\s+final\s*:/i', '', $lineTrim));
+                if ($d) $meta['revised'] = $d;
+            }
+            if (preg_match('/^Aprobado\s*:/i', $lineTrim)) {
+                $d = $parseDate(preg_replace('/^Aprobado\s*:/i', '', $lineTrim));
+                if ($d) $meta['accepted'] = $d;
+            }
+            if (preg_match('/^Volumen\s*:/i', $lineTrim)) {
+                $meta['volume'] = trim(preg_replace('/^Volumen\s*:/i', '', $lineTrim));
+            }
+            if (preg_match('/^Elocation\-id\s*:/i', $lineTrim)) {
+                $meta['elocation-id'] = trim(preg_replace('/^Elocation\-id\s*:/i', '', $lineTrim));
+            }
+            if (preg_match('/^(\d{1,2})\s+(\d{2})\s+(\d{4})$/', $lineTrim)) {
+                $meta['pubdate'] = $lineTrim;
+            }
+            if ($meta['pubdate'] === '' && preg_match('/\b(\d{1,2})\s+(\d{2})\s+(\d{4})\b/', $lineTrim, $mdate)) {
+                $meta['pubdate'] = $mdate[1] . ' ' . $mdate[2] . ' ' . $mdate[3];
+            }
+            if (preg_match('/\b(\d{1,2})\s+(\d{2})\s+(\d{4})\s+(\d{4})\s+(\d{1,3})\s+(e\d+)\b/i', $lineTrim, $mcombo)) {
+                $meta['pubdate'] = $mcombo[1] . ' ' . $mcombo[2] . ' ' . $mcombo[3];
+                $meta['collectionYear'] = $mcombo[4];
+                $meta['volume'] = $mcombo[5];
+                $meta['elocation-id'] = $mcombo[6];
+            }
+            if ($meta['elocation-id'] === '' && preg_match('/\b(e\d+)\b/i', $lineTrim, $melo)) {
+                $meta['elocation-id'] = $melo[1];
+            }
+            if ($meta['volume'] === '' && $meta['pubdate'] !== '' && preg_match('/^\d{1,3}$/', $lineTrim)) {
+                $vol = (int)$lineTrim;
+                if ($vol > 1) {
+                    $meta['volume'] = $lineTrim;
+                }
+            }
+        }
+
+        if (!empty($meta['accepted'])) {
+            $parts = preg_split('/\s+/', $meta['accepted']);
+            $meta['collectionYear'] = $parts[2] ?? '';
+        }
+
+        // Keywords cleanup
+        $meta['kwdsEs'] = array_values(array_filter(array_map(function ($v) {
+            return rtrim(trim($v), '.');
+        }, $meta['kwdsEs'])));
+        $meta['kwdsEn'] = array_values(array_filter(array_map(function ($v) {
+            return rtrim(trim($v), '.');
+        }, $meta['kwdsEn'])));
+
+        // Reference count
+        $inRefs = false;
+        $refCount = 0;
+        foreach ($clean as $line) {
+            if (preg_match('/^Referencias bibliogr/i', $line)) {
+                $inRefs = true;
+                continue;
+            }
+            if ($inRefs && preg_match('/^\d+\./', $line)) {
+                $refCount++;
+            }
+        }
+        if ($refCount > 0) {
+            $meta['refCount'] = (string)$refCount;
+        }
+
+        return $meta;
+    }
+
+    public function buildJatsXml(array $meta)
+    {
+        $e = function ($s) {
+            return htmlspecialchars((string)$s, ENT_QUOTES | ENT_XML1, 'UTF-8');
+        };
+
+        $doi = $meta['doi'] ?? '';
+        $pubId = $doi ? implode('/', array_slice(explode('/', $doi), 1)) : 'XXXX';
+        $lang = $meta['lang'] ?? 'es';
+
+        $journalMeta = "  <journal-meta>\n";
+        $journalMeta .= "    <journal-id journal-id-type=\"nlm-ta\">" . $e($meta['journalAbbrev'] ?? $meta['journalTitle'] ?? '') . "</journal-id>\n";
+        if (!empty($meta['journalIdPublisher'])) {
+            $journalMeta .= "    <journal-id journal-id-type=\"publisher-id\">" . $e($meta['journalIdPublisher']) . "</journal-id>\n";
+        }
+        $journalMeta .= "    <journal-title-group>\n";
+        $journalMeta .= "      <journal-title>" . $e($meta['journalTitle'] ?? '') . "</journal-title>\n";
+        $journalMeta .= "      <abbrev-journal-title abbrev-type=\"publisher\">" . $e($meta['journalAbbrev'] ?? '') . "</abbrev-journal-title>\n";
+        $journalMeta .= "    </journal-title-group>\n";
+        if (!empty($meta['issn_ppub'])) $journalMeta .= "    <issn pub-type=\"ppub\">" . $e($meta['issn_ppub']) . "</issn>\n";
+        if (!empty($meta['issn_epub'])) $journalMeta .= "    <issn pub-type=\"epub\">" . $e($meta['issn_epub']) . "</issn>\n";
+        $journalMeta .= "    <publisher>\n";
+        $journalMeta .= "      <publisher-name>" . $e($meta['publisher'] ?? '') . "</publisher-name>\n";
+        $journalMeta .= "    </publisher>\n";
+        $journalMeta .= "  </journal-meta>";
+
+        $articleMeta = "  <article-meta>\n";
+        if ($doi) $articleMeta .= "    <article-id pub-id-type=\"doi\">" . $e($doi) . "</article-id>\n";
+        $articleMeta .= "    <article-categories>\n";
+        $articleMeta .= "      <subj-group subj-group-type=\"heading\">\n";
+        $articleMeta .= "        <subject>Artículo</subject>\n";
+        $articleMeta .= "      </subj-group>\n";
+        $articleMeta .= "    </article-categories>\n";
+        $articleMeta .= "    <title-group>\n";
+        $articleMeta .= "      <article-title>" . $e($meta['articleTitle'] ?? '') . "</article-title>\n";
+        if (!empty($meta['articleTitleEn'])) {
+            $articleMeta .= "      <trans-title-group xml:lang=\"en\">\n";
+            $articleMeta .= "        <trans-title>" . $e($meta['articleTitleEn']) . "</trans-title>\n";
+            $articleMeta .= "      </trans-title-group>\n";
+        }
+        $articleMeta .= "    </title-group>\n";
+
+        $articleMeta .= "    <contrib-group>\n";
+        foreach (($meta['authors'] ?? []) as $i => $a) {
+            $name = trim($a['name'] ?? '');
+            if ($name === '') continue;
+            $parts = preg_split('/\s+/', $name);
+            $surname = array_pop($parts);
+            $given = implode(' ', $parts);
+            $n = $i + 1;
+            $articleMeta .= "      <contrib contrib-type=\"author\">\n";
+            if (!empty($a['orcid'])) {
+                $articleMeta .= "        <contrib-id contrib-id-type=\"orcid\">https://orcid.org/" . $e($a['orcid']) . "</contrib-id>\n";
+            }
+            $articleMeta .= "        <name>\n";
+            $articleMeta .= "          <surname>" . $e($surname) . "</surname>\n";
+            $articleMeta .= "          <given-names>" . $e($given) . "</given-names>\n";
+            $articleMeta .= "        </name>\n";
+            $articleMeta .= "        <xref ref-type=\"aff\" rid=\"aff" . $n . "\"><sup>" . $n . "</sup></xref>\n";
+            $articleMeta .= "      </contrib>\n";
+        }
+        $articleMeta .= "    </contrib-group>\n";
+
+        foreach (($meta['affiliations'] ?? []) as $i => $aff) {
+            $n = $i + 1;
+            $articleMeta .= "    <aff id=\"aff" . $n . "\">\n";
+            $articleMeta .= "      <label>" . $n . "</label>\n";
+            $articleMeta .= "      <institution content-type=\"original\">" . $e($aff) . "</institution>\n";
+            if (!empty($meta['affiliations_norm'][$i])) {
+                $articleMeta .= "      <institution content-type=\"normalized\">" . $e($meta['affiliations_norm'][$i]) . "</institution>\n";
+            }
+            if (!empty($meta['affiliations_orgdiv1'][$i])) {
+                $articleMeta .= "      <institution content-type=\"orgdiv1\">" . $e($meta['affiliations_orgdiv1'][$i]) . "</institution>\n";
+            }
+            if (!empty($meta['affiliations_orgdiv2'][$i])) {
+                $articleMeta .= "      <institution content-type=\"orgdiv2\">" . $e($meta['affiliations_orgdiv2'][$i]) . "</institution>\n";
+            }
+            if (!empty($meta['affiliations_orgname'][$i])) {
+                $articleMeta .= "      <institution content-type=\"orgname\">" . $e($meta['affiliations_orgname'][$i]) . "</institution>\n";
+            }
+            if (!empty($meta['affiliations_state'][$i])) {
+                $articleMeta .= "      <addr-line>\n";
+                $articleMeta .= "        <state>" . $e($meta['affiliations_state'][$i]) . "</state>\n";
+                $articleMeta .= "      </addr-line>\n";
+            }
+            if (!empty($meta['affiliations_country'][$i])) {
+                $articleMeta .= "      <country country=\"" . $e($meta['affiliations_country'][$i]) . "\">" . $e($meta['affiliations_country_name'][$i] ?? '') . "</country>\n";
+            }
+            if (!empty($meta['affiliations_email'][$i])) {
+                $articleMeta .= "      <email>" . $e($meta['affiliations_email'][$i]) . "</email>\n";
+            }
+            $articleMeta .= "    </aff>\n";
+        }
+
+        if (!empty($meta['conflict']) || !empty($meta['contributions'])) {
+            $articleMeta .= "    <author-notes>\n";
+            if (!empty($meta['conflict'])) {
+                $articleMeta .= "      <fn fn-type=\"conflict\" id=\"fn2\">\n";
+                $articleMeta .= "        <label>Conflicto de Intereses</label>\n";
+                $articleMeta .= "        <p>" . $e($meta['conflict']) . "</p>\n";
+                $articleMeta .= "      </fn>\n";
+            }
+            if (!empty($meta['contributions'])) {
+                $articleMeta .= "      <fn fn-type=\"equal\" id=\"fn3\">\n";
+                $articleMeta .= "        <label>Contribución autoral</label>\n";
+                $articleMeta .= "        <p>" . $e(implode(' ', $meta['contributions'])) . "</p>\n";
+                $articleMeta .= "      </fn>\n";
+            }
+            $articleMeta .= "    </author-notes>\n";
+        }
+
+        if (!empty($meta['pubdate'])) {
+            $parts = preg_split('/\s+/', trim($meta['pubdate']));
+            $day = $parts[0] ?? '';
+            $month = $parts[1] ?? '';
+            $year = $parts[2] ?? '';
+            $articleMeta .= "    <pub-date date-type=\"pub\" publication-format=\"electronic\">\n";
+            if ($day) $articleMeta .= "      <day>" . $e($day) . "</day>\n";
+            if ($month) $articleMeta .= "      <month>" . $e($month) . "</month>\n";
+            if ($year) $articleMeta .= "      <year>" . $e($year) . "</year>\n";
+            $articleMeta .= "    </pub-date>\n";
+        }
+        $collectionYear = '';
+        if (!empty($meta['collectionYear'])) $collectionYear = $meta['collectionYear'];
+        if (!$collectionYear && !empty($meta['pubdate'])) {
+            $parts = preg_split('/\s+/', trim($meta['pubdate']));
+            $collectionYear = $parts[2] ?? '';
+        }
+        if ($collectionYear) {
+            $articleMeta .= "    <pub-date date-type=\"collection\" publication-format=\"electronic\">\n";
+            $articleMeta .= "      <year>" . $e($collectionYear) . "</year>\n";
+            $articleMeta .= "    </pub-date>\n";
+        }
+        if (!empty($meta['volume'])) $articleMeta .= "    <volume>" . $e($meta['volume']) . "</volume>\n";
+        if (!empty($meta['elocation-id'])) $articleMeta .= "    <elocation-id>" . $e($meta['elocation-id']) . "</elocation-id>\n";
+
+        if (!empty($meta['received']) || !empty($meta['revised']) || !empty($meta['accepted'])) {
+            $articleMeta .= "    <history>\n";
+            if (!empty($meta['received'])) {
+                $d = preg_split('/\s+/', trim($meta['received']));
+                $articleMeta .= "      <date date-type=\"received\">\n";
+                if (!empty($d[0])) $articleMeta .= "        <day>" . $e($d[0]) . "</day>\n";
+                if (!empty($d[1])) $articleMeta .= "        <month>" . $e($d[1]) . "</month>\n";
+                if (!empty($d[2])) $articleMeta .= "        <year>" . $e($d[2]) . "</year>\n";
+                $articleMeta .= "      </date>\n";
+            }
+            if (!empty($meta['revised'])) {
+                $d = preg_split('/\s+/', trim($meta['revised']));
+                $articleMeta .= "      <date date-type=\"rev-recd\">\n";
+                if (!empty($d[0])) $articleMeta .= "        <day>" . $e($d[0]) . "</day>\n";
+                if (!empty($d[1])) $articleMeta .= "        <month>" . $e($d[1]) . "</month>\n";
+                if (!empty($d[2])) $articleMeta .= "        <year>" . $e($d[2]) . "</year>\n";
+                $articleMeta .= "      </date>\n";
+            }
+            if (!empty($meta['accepted'])) {
+                $d = preg_split('/\s+/', trim($meta['accepted']));
+                $articleMeta .= "      <date date-type=\"accepted\">\n";
+                if (!empty($d[0])) $articleMeta .= "        <day>" . $e($d[0]) . "</day>\n";
+                if (!empty($d[1])) $articleMeta .= "        <month>" . $e($d[1]) . "</month>\n";
+                if (!empty($d[2])) $articleMeta .= "        <year>" . $e($d[2]) . "</year>\n";
+                $articleMeta .= "      </date>\n";
+            }
+            $articleMeta .= "    </history>\n";
+        }
+
+        $articleMeta .= "    <permissions>\n";
+        $articleMeta .= "      <license license-type=\"open-access\" xlink:href=\"https://creativecommons.org/licenses/by/4.0/\" xml:lang=\"" . $e($lang) . "\">\n";
+        $articleMeta .= "        <license-p>Este es un artículo publicado en acceso abierto bajo una licencia Creative Commons</license-p>\n";
+        $articleMeta .= "      </license>\n";
+        $articleMeta .= "    </permissions>\n";
+
+        if (!empty($meta['abstractEs'])) {
+            $articleMeta .= "    <abstract>\n";
+            $articleMeta .= "      <title>Resumen</title>\n";
+            $articleMeta .= "      <p>" . $e($meta['abstractEs']) . "</p>\n";
+            $articleMeta .= "    </abstract>\n";
+        }
+        if (!empty($meta['abstractEn'])) {
+            $articleMeta .= "    <trans-abstract xml:lang=\"en\">\n";
+            $articleMeta .= "      <title>Abstract</title>\n";
+            $articleMeta .= "      <p>" . $e($meta['abstractEn']) . "</p>\n";
+            $articleMeta .= "    </trans-abstract>\n";
+        }
+
+        if (!empty($meta['kwdsEs'])) {
+            $articleMeta .= "    <kwd-group xml:lang=\"es\">\n";
+            $articleMeta .= "      <title>Palabras claves:</title>\n";
+            foreach ($meta['kwdsEs'] as $k) {
+                $articleMeta .= "      <kwd>" . $e($k) . "</kwd>\n";
+            }
+            $articleMeta .= "    </kwd-group>\n";
+        }
+        if (!empty($meta['kwdsEn'])) {
+            $articleMeta .= "    <kwd-group xml:lang=\"en\">\n";
+            $articleMeta .= "      <title>Keywords:</title>\n";
+            foreach ($meta['kwdsEn'] as $k) {
+                $articleMeta .= "      <kwd>" . $e($k) . "</kwd>\n";
+            }
+            $articleMeta .= "    </kwd-group>\n";
+        }
+
+        if (!empty($meta['funding'])) {
+            $articleMeta .= "    <funding-group>\n";
+            foreach ($meta['funding'] as $f) {
+                $source = is_array($f) ? ($f['source'] ?? '') : $f;
+                $awardId = is_array($f) ? ($f['awardId'] ?? '') : '';
+                $articleMeta .= "      <award-group award-type=\"contract\">\n";
+                $articleMeta .= "        <funding-source>" . $e($source) . "</funding-source>\n";
+                if ($awardId !== '') {
+                    $articleMeta .= "        <award-id>" . $e($awardId) . "</award-id>\n";
+                }
+                $articleMeta .= "      </award-group>\n";
+            }
+            if (!empty($meta['fundingStatement'])) {
+                $articleMeta .= "      <funding-statement>" . $e($meta['fundingStatement']) . "</funding-statement>\n";
+            }
+            $articleMeta .= "    </funding-group>\n";
+        }
+
+        if (!empty($meta['refCount'])) {
+            $articleMeta .= "    <counts>\n";
+            $articleMeta .= "      <fig-count count=\"0\"/>\n";
+            $articleMeta .= "      <table-count count=\"0\"/>\n";
+            $articleMeta .= "      <equation-count count=\"0\"/>\n";
+            $articleMeta .= "      <ref-count count=\"" . $e($meta['refCount']) . "\"/>\n";
+            $articleMeta .= "      <page-count count=\"1\"/>\n";
+            $articleMeta .= "    </counts>\n";
+        }
+
+        $articleMeta .= "  </article-meta>\n";
+
+        $xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
+        $xml .= "<!DOCTYPE article PUBLIC \"-//NLM//DTD JATS (Z39.96) Journal Publishing DTD v1.1 20121330//EN\"\n";
+        $xml .= "  \"https://jats.nlm.nih.gov/publishing/1.1/JATS-journalpublishing1-1.dtd\">\n";
+        $xml .= "<article xmlns:mml=\"http://www.w3.org/1998/Math/MathML\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" article-type=\"research-article\" dtd-version=\"1.1\" specific-use=\"sps-1.9\" xml:lang=\"" . $e($lang) . "\">\n";
+        $xml .= "<front>\n";
+        $xml .= $journalMeta . "\n\n";
+        $xml .= $articleMeta . "</front>\n";
+        $xml .= "</article>\n";
+
+        return $xml;
+    }
+}
