@@ -1,4 +1,4 @@
-/* SciELO JATS Converter · app.js */
+/* XML JATS · app.js */
 'use strict';
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────

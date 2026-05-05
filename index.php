@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>SciELO JATS Converter · SPS 1.9</title>
+  <title>XML JATS</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,400&family=Syne:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css">
@@ -15,10 +15,10 @@
 <header class="header">
   <div class="header-inner">
     <div class="logo">
-      <div class="logo-badge">SC</div>
+      <div class="logo-badge">XML</div>
       <div class="logo-text">
-        <span class="logo-name">SciELO JATS Converter</span>
-        <span class="logo-ver">SPS 1.9 · JATS 1.3 · Front-only</span>
+        <span class="logo-name">XML JATS</span>
+        <span class="logo-ver">Front-only</span>
       </div>
     </div>
     <div class="header-tag">
@@ -159,7 +159,7 @@
     <div class="result-header">
       <h2 class="panel-title">
         <span class="panel-title-icon">✅</span>
-        XML JATS · SciELO SPS 1.9
+        XML JATS
       </h2>
       <div class="result-actions">
         <button class="btn-action" id="copyBtn"><span>Copiar</span></button>
@@ -174,7 +174,7 @@
 </main>
 
 <footer class="footer">
-  <span>SciELO JATS Converter</span>
+  <span>XML JATS</span>
   <span class="footer-sep">·</span>
   <span>Front-only</span>
   <span class="footer-sep">·</span>
