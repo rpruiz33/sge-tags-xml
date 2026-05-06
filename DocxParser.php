@@ -1,16 +1,28 @@
 <?php
 
+/**
+ * Clase principal para convertir archivos DOCX en XML JATS.
+ *
+ * Funciona en tres pasos principales:
+ * 1) extraer las líneas de texto del DOCX,
+ * 2) interpretar metadatos a partir de esas líneas,
+ * 3) construir el XML JATS con los metadatos detectados.
+ */
 class DocxParser
 {
     private $filePath;
 
     public function __construct($filePath)
     {
+        // Guardamos la ruta del archivo DOCX que vamos a procesar.
         $this->filePath = $filePath;
     }
 
     public function extractLines()
     {
+        // Esta función abre el archivo DOCX como ZIP, lee el XML interno y extrae
+        // cada párrafo de texto para devolverlo como una lista de líneas.
+
         if (!is_file($this->filePath)) {
             return [];
         }
@@ -20,6 +32,7 @@ class DocxParser
             return [];
         }
 
+        // El contenido principal del documento Word está en word/document.xml
         $xmlContent = $zip->getFromName('word/document.xml');
         $zip->close();
 
@@ -49,6 +62,8 @@ class DocxParser
 
     public function parseMetadata(array $lines)
     {
+        // Esta función recibe las líneas de texto extraídas del DOCX y
+        // construye un array con todos los metadatos relevantes para JATS.
         $meta = [
             'lang' => 'es',
             'sps' => 'sps-1.9',
@@ -80,8 +95,13 @@ class DocxParser
             'received' => '',
             'revised' => '',
             'accepted' => '',
+            'pubdate' => '',
             'volume' => '',
             'elocation-id' => '',
+            'figCount' => '0',
+            'tableCount' => '0',
+            'equationCount' => '0',
+            'pageCount' => '1',
             'sections' => [],
             'conflict' => '',
             'contributions' => [],
@@ -93,6 +113,7 @@ class DocxParser
             return $v !== '';
         }));
 
+        // Mapa de nombres de meses en español/portugués a número de mes.
         $monthMap = [
             'ene' => '01', 'enero' => '01',
             'feb' => '02', 'fev' => '02', 'febrero' => '02',
@@ -117,10 +138,15 @@ class DocxParser
                 $year = $m[3];
                 if ($month) return $day . ' ' . $month . ' ' . $year;
             }
+            if (preg_match('/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/', $text, $m)) {
+                $day = str_pad($m[1], 2, '0', STR_PAD_LEFT);
+                $month = str_pad($m[2], 2, '0', STR_PAD_LEFT);
+                return $day . ' ' . $month . ' ' . $m[3];
+            }
             return '';
         };
 
-        // Header block (sps, lang, journal info)
+        // Bloque de encabezado (SPS, idioma, información de revista)
         for ($i = 0; $i < count($clean); $i++) {
             if (preg_match('/^sps-?1\.9$/i', $clean[$i])) {
                 $meta['sps'] = $clean[$i];
@@ -143,7 +169,7 @@ class DocxParser
             }
         }
 
-        // ISSN (first two matches)
+        // ISSN (primeras dos coincidencias)
         $issns = [];
         foreach ($clean as $line) {
             if (preg_match_all('/\b\d{4}-\d{3}[\dxX]\b/u', $line, $m)) {
@@ -155,7 +181,7 @@ class DocxParser
         if (isset($issns[0])) $meta['issn_ppub'] = $issns[0];
         if (isset($issns[1])) $meta['issn_epub'] = $issns[1];
 
-        // Publisher (line after ISSNs if present)
+        // Editor/publisher (línea después de los ISSN, si existe)
         for ($i = 0; $i < count($clean); $i++) {
             if (preg_match('/\b\d{4}-\d{3}[\dxX]\b/u', $clean[$i])) {
                 $meta['publisher'] = $clean[$i + 2] ?? $meta['publisher'];
@@ -163,7 +189,7 @@ class DocxParser
             }
         }
 
-        // Titles around DOI
+        // Títulos alrededor del DOI
         $doiIndex = -1;
         foreach ($clean as $i => $line) {
             if (trim($line) === $meta['doi']) {
@@ -195,6 +221,7 @@ class DocxParser
         }
 
         if ($meta['articleTitle'] === '' || preg_match('/^art[ií]culo$/i', $meta['articleTitle'])) {
+            // Si todavía no hay título claro, buscamos después de la palabra artículo.
             $seenArticleLabel = false;
             foreach ($clean as $line) {
                 $lineTrim = trim($line);
@@ -227,7 +254,7 @@ class DocxParser
             }
         }
 
-        // Authors
+        // Autores: detecta líneas con nombre + número + ORCID.
         foreach ($clean as $line) {
             if (preg_match('/^(.+?)(\d+)\s+https?:\/\/orcid\.org\/(\S+)/u', $line, $m)) {
                 $name = trim($m[1]);
@@ -236,7 +263,7 @@ class DocxParser
             }
         }
 
-        // Affiliations
+        // Afiliaciones: busca líneas numeradas y separa los datos estructurados.
         foreach ($clean as $line) {
             $lineTrim = trim($line);
             if ($lineTrim === '') {
@@ -261,6 +288,7 @@ class DocxParser
                 }
                 $meta['affiliations'][] = $affText;
 
+                // orgname / normalizado
                 if (preg_match('/(Universidade[^.,;]+|Universidad[^.,;]+|University[^.,;]+)/u', $affText, $org)) {
                     $meta['affiliations_norm'][] = trim($org[1]);
                     $meta['affiliations_orgname'][] = trim($org[1]);
@@ -269,16 +297,32 @@ class DocxParser
                     $meta['affiliations_orgname'][] = '';
                 }
 
-                if (preg_match('/(Departamento[^.;,]+)/u', $affText, $div)) {
-                    $meta['affiliations_orgdiv2'][] = trim($div[1]);
-                } else {
-                    $meta['affiliations_orgdiv2'][] = '';
+                $departmentMatches = [];
+                if (preg_match_all('/(Departamento[^.;,]+)/iu', $affText, $mdept)) {
+                    $departmentMatches = array_map('trim', $mdept[1]);
                 }
-                if (preg_match('/(Programa[^.;,]+)/u', $affText, $div1)) {
-                    $meta['affiliations_orgdiv1'][] = trim($div1[1]);
-                } else {
-                    $meta['affiliations_orgdiv1'][] = '';
+                $programMatches = [];
+                if (preg_match_all('/(Programa[^.;,]+)/iu', $affText, $mprog)) {
+                    $programMatches = array_map('trim', $mprog[1]);
                 }
+
+                $orgdiv1 = '';
+                $orgdiv2 = '';
+                if (!empty($departmentMatches)) {
+                    $orgdiv1 = $departmentMatches[0];
+                    $orgdiv2 = $departmentMatches[1] ?? '';
+                } elseif (!empty($programMatches)) {
+                    $orgdiv1 = $programMatches[0];
+                    $orgdiv2 = $programMatches[1] ?? '';
+                }
+
+                $idx = count($meta['affiliations']) - 1;
+                if (!empty($programMatches) && !empty($departmentMatches)) {
+                    $meta['affiliations_orgname'][$idx] = $programMatches[0];
+                }
+
+                $meta['affiliations_orgdiv1'][] = $orgdiv1;
+                $meta['affiliations_orgdiv2'][] = $orgdiv2;
 
                 if (preg_match('/([\p{L}\s]+),\s*Brasil/u', $affText, $st)) {
                     $state = trim($st[1]);
@@ -299,7 +343,8 @@ class DocxParser
             }
         }
 
-        // Abstracts, keywords, funding, conflict, contributions
+        // Abstracts, keywords, financiamiento, conflicto y contribuciones.
+        // Esta sección usa un estado para saber qué texto se está acumulando.
         $state = '';
         foreach ($clean as $line) {
             $lineTrim = trim($line);
@@ -327,6 +372,15 @@ class DocxParser
             }
             if (preg_match('/^Financiamiento$/i', $lineTrim)) {
                 $state = 'funding';
+                continue;
+            }
+            if (preg_match('/^Conflicto de Intereses\s*:\s*(.*?)\s+Contribuci[óo]n autoral\s*:\s*(.*)$/iu', $lineTrim, $mcombined)) {
+                $meta['conflict'] = trim($mcombined[1]);
+                $contribution = trim($mcombined[2]);
+                if ($contribution !== '') {
+                    $meta['contributions'][] = $contribution;
+                }
+                $state = '';
                 continue;
             }
             if (preg_match('/^Conflicto de Intereses\s*:?(.*)$/i', $lineTrim, $mconf)) {
@@ -412,7 +466,7 @@ class DocxParser
             }
         }
 
-        // Dates
+        // Fechas
         $refStart = -1;
         foreach ($clean as $idx => $line) {
             if (preg_match('/^Referencias bibliogr/i', $line)) {
@@ -426,17 +480,24 @@ class DocxParser
             if ($refStart !== -1 && $idx >= $refStart) {
                 continue;
             }
-            if (preg_match('/^Recibido\s*:/i', $lineTrim)) {
-                $d = $parseDate(preg_replace('/^Recibido\s*:/i', '', $lineTrim));
+            if (preg_match('/^(Recibido|Recebido|Received)\s*:/i', $lineTrim)) {
+                $d = $parseDate(preg_replace('/^(Recibido|Recebido|Received)\s*:/i', '', $lineTrim));
                 if ($d) $meta['received'] = $d;
             }
-            if (preg_match('/Versi[oó]n\s+final\s*:/i', $lineTrim)) {
-                $d = $parseDate(preg_replace('/.*Versi[oó]n\s+final\s*:/i', '', $lineTrim));
+            if (preg_match('/^(Versi[oó]n\s+final|Revisado|Revised)\s*:/i', $lineTrim)) {
+                $d = $parseDate(preg_replace('/^(Versi[oó]n\s+final|Revisado|Revised)\s*:/i', '', $lineTrim));
                 if ($d) $meta['revised'] = $d;
             }
-            if (preg_match('/^Aprobado\s*:/i', $lineTrim)) {
-                $d = $parseDate(preg_replace('/^Aprobado\s*:/i', '', $lineTrim));
+            if (preg_match('/^(Aprobado|Aceptado|Aceito|Accepted)\s*:/i', $lineTrim)) {
+                $d = $parseDate(preg_replace('/^(Aprobado|Aceptado|Aceito|Accepted)\s*:/i', '', $lineTrim));
                 if ($d) $meta['accepted'] = $d;
+            }
+            if (preg_match('/^(Publicado|Publicaci[oó]n|Publication)\s*:\s*(.*)$/i', $lineTrim, $mpubline)) {
+                $d = $parseDate(trim($mpubline[2]));
+                if ($d) {
+                    $meta['pubdate'] = $d;
+                    continue;
+                }
             }
             if (preg_match('/^Volumen\s*:/i', $lineTrim)) {
                 $meta['volume'] = trim(preg_replace('/^Volumen\s*:/i', '', $lineTrim));
@@ -444,8 +505,21 @@ class DocxParser
             if (preg_match('/^Elocation\-id\s*:/i', $lineTrim)) {
                 $meta['elocation-id'] = trim(preg_replace('/^Elocation\-id\s*:/i', '', $lineTrim));
             }
-            if (preg_match('/^(\d{1,2})\s+(\d{2})\s+(\d{4})$/', $lineTrim)) {
-                $meta['pubdate'] = $lineTrim;
+            if (preg_match('/^(P[aá]ginas|Pages)\s*:\s*(\d+)(?:\s*[-–]\s*\d+)?/iu', $lineTrim, $mpages)) {
+                $meta['pageCount'] = trim($mpages[2]);
+            }
+            if (preg_match('/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/', $lineTrim, $mpub)) {
+                $meta['pubdate'] = sprintf('%02d %02d %04d', $mpub[1], $mpub[2], $mpub[3]);
+                continue;
+            }
+            if (preg_match('/^\d{4}$/', $lineTrim) && intval($lineTrim) >= 1900 && intval($lineTrim) <= 2099) {
+                if ($meta['collectionYear'] === '') {
+                    $meta['collectionYear'] = $lineTrim;
+                }
+                continue;
+            }
+            if (preg_match('/^(\d{1,2})\s+(\d{2})\s+(\d{4})$/', $lineTrim, $mdate)) {
+                $meta['pubdate'] = $mdate[1] . ' ' . $mdate[2] . ' ' . $mdate[3];
             }
             if ($meta['pubdate'] === '' && preg_match('/\b(\d{1,2})\s+(\d{2})\s+(\d{4})\b/', $lineTrim, $mdate)) {
                 $meta['pubdate'] = $mdate[1] . ' ' . $mdate[2] . ' ' . $mdate[3];
@@ -459,9 +533,9 @@ class DocxParser
             if ($meta['elocation-id'] === '' && preg_match('/\b(e\d+)\b/i', $lineTrim, $melo)) {
                 $meta['elocation-id'] = $melo[1];
             }
-            if ($meta['volume'] === '' && $meta['pubdate'] !== '' && preg_match('/^\d{1,3}$/', $lineTrim)) {
+            if ($meta['volume'] === '' && ($meta['pubdate'] ?? '') !== '' && preg_match('/^\d{1,3}$/', $lineTrim)) {
                 $vol = (int)$lineTrim;
-                if ($vol > 1) {
+                if ($vol > 1 && $vol <= 999) {
                     $meta['volume'] = $lineTrim;
                 }
             }
@@ -472,7 +546,7 @@ class DocxParser
             $meta['collectionYear'] = $parts[2] ?? '';
         }
 
-        // Keywords cleanup
+        // Limpieza de palabras clave
         $meta['kwdsEs'] = array_values(array_filter(array_map(function ($v) {
             return rtrim(trim($v), '.');
         }, $meta['kwdsEs'])));
@@ -480,7 +554,7 @@ class DocxParser
             return rtrim(trim($v), '.');
         }, $meta['kwdsEn'])));
 
-        // Reference count
+        // Conteo de referencias
         $inRefs = false;
         $refCount = 0;
         foreach ($clean as $line) {
@@ -501,12 +575,12 @@ class DocxParser
 
     public function buildJatsXml(array $meta)
     {
+        // Esta función toma los metadatos ya extraídos y genera el XML JATS.
         $e = function ($s) {
             return htmlspecialchars((string)$s, ENT_QUOTES | ENT_XML1, 'UTF-8');
         };
 
         $doi = $meta['doi'] ?? '';
-        $pubId = $doi ? implode('/', array_slice(explode('/', $doi), 1)) : 'XXXX';
         $lang = $meta['lang'] ?? 'es';
 
         $journalMeta = "  <journal-meta>\n";
@@ -542,6 +616,7 @@ class DocxParser
         $articleMeta .= "    </title-group>\n";
 
         $articleMeta .= "    <contrib-group>\n";
+        // Contribuciones de autor: cada autor se transforma en un contrib-type="author".
         foreach (($meta['authors'] ?? []) as $i => $a) {
             $name = trim($a['name'] ?? '');
             if ($name === '') continue;
@@ -562,6 +637,7 @@ class DocxParser
         }
         $articleMeta .= "    </contrib-group>\n";
 
+        // Afiliaciones: cada entrada numerada se transforma en un <aff> con datos estructurados.
         foreach (($meta['affiliations'] ?? []) as $i => $aff) {
             $n = $i + 1;
             $articleMeta .= "    <aff id=\"aff" . $n . "\">\n";
@@ -570,9 +646,11 @@ class DocxParser
             if (!empty($meta['affiliations_norm'][$i])) {
                 $articleMeta .= "      <institution content-type=\"normalized\">" . $e($meta['affiliations_norm'][$i]) . "</institution>\n";
             }
+            // orgdiv1 (programa o división superior) va primero
             if (!empty($meta['affiliations_orgdiv1'][$i])) {
                 $articleMeta .= "      <institution content-type=\"orgdiv1\">" . $e($meta['affiliations_orgdiv1'][$i]) . "</institution>\n";
             }
+            // orgdiv2 (departamento o división inferior) va segundo
             if (!empty($meta['affiliations_orgdiv2'][$i])) {
                 $articleMeta .= "      <institution content-type=\"orgdiv2\">" . $e($meta['affiliations_orgdiv2'][$i]) . "</institution>\n";
             }
@@ -593,15 +671,18 @@ class DocxParser
             $articleMeta .= "    </aff>\n";
         }
 
-        if (!empty($meta['conflict']) || !empty($meta['contributions'])) {
+        // Notas de autor: conflicto y contribuciones en bloques <fn> separados
+        $hasConflict = !empty($meta['conflict']);
+        $hasContrib = !empty($meta['contributions']);
+        if ($hasConflict || $hasContrib) {
             $articleMeta .= "    <author-notes>\n";
-            if (!empty($meta['conflict'])) {
+            if ($hasConflict) {
                 $articleMeta .= "      <fn fn-type=\"conflict\" id=\"fn2\">\n";
                 $articleMeta .= "        <label>Conflicto de Intereses</label>\n";
                 $articleMeta .= "        <p>" . $e($meta['conflict']) . "</p>\n";
                 $articleMeta .= "      </fn>\n";
             }
-            if (!empty($meta['contributions'])) {
+            if ($hasContrib) {
                 $articleMeta .= "      <fn fn-type=\"equal\" id=\"fn3\">\n";
                 $articleMeta .= "        <label>Contribución autoral</label>\n";
                 $articleMeta .= "        <p>" . $e(implode(' ', $meta['contributions'])) . "</p>\n";
@@ -621,6 +702,7 @@ class DocxParser
             if ($year) $articleMeta .= "      <year>" . $e($year) . "</year>\n";
             $articleMeta .= "    </pub-date>\n";
         }
+
         $collectionYear = '';
         if (!empty($meta['collectionYear'])) $collectionYear = $meta['collectionYear'];
         if (!$collectionYear && !empty($meta['pubdate'])) {
@@ -632,6 +714,7 @@ class DocxParser
             $articleMeta .= "      <year>" . $e($collectionYear) . "</year>\n";
             $articleMeta .= "    </pub-date>\n";
         }
+
         if (!empty($meta['volume'])) $articleMeta .= "    <volume>" . $e($meta['volume']) . "</volume>\n";
         if (!empty($meta['elocation-id'])) $articleMeta .= "    <elocation-id>" . $e($meta['elocation-id']) . "</elocation-id>\n";
 
@@ -718,15 +801,18 @@ class DocxParser
             $articleMeta .= "    </funding-group>\n";
         }
 
-        if (!empty($meta['refCount'])) {
-            $articleMeta .= "    <counts>\n";
-            $articleMeta .= "      <fig-count count=\"0\"/>\n";
-            $articleMeta .= "      <table-count count=\"0\"/>\n";
-            $articleMeta .= "      <equation-count count=\"0\"/>\n";
-            $articleMeta .= "      <ref-count count=\"" . $e($meta['refCount']) . "\"/>\n";
-            $articleMeta .= "      <page-count count=\"1\"/>\n";
-            $articleMeta .= "    </counts>\n";
-        }
+        $figCount = isset($meta['figCount']) && $meta['figCount'] !== '' ? $meta['figCount'] : 0;
+        $tableCount = isset($meta['tableCount']) && $meta['tableCount'] !== '' ? $meta['tableCount'] : 0;
+        $equationCount = isset($meta['equationCount']) && $meta['equationCount'] !== '' ? $meta['equationCount'] : 0;
+        $refCount = isset($meta['refCount']) && $meta['refCount'] !== '' ? $meta['refCount'] : 0;
+        $pageCount = isset($meta['pageCount']) && $meta['pageCount'] !== '' ? $meta['pageCount'] : 1;
+        $articleMeta .= "    <counts>\n";
+        $articleMeta .= "      <fig-count count=\"" . $e($figCount) . "\"/>\n";
+        $articleMeta .= "      <table-count count=\"" . $e($tableCount) . "\"/>\n";
+        $articleMeta .= "      <equation-count count=\"" . $e($equationCount) . "\"/>\n";
+        $articleMeta .= "      <ref-count count=\"" . $e($refCount) . "\"/>\n";
+        $articleMeta .= "      <page-count count=\"" . $e($pageCount) . "\"/>\n";
+        $articleMeta .= "    </counts>\n";
 
         $articleMeta .= "  </article-meta>\n";
 
