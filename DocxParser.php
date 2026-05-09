@@ -693,46 +693,53 @@ class DocxParser
     public function buildJatsXml(array $meta)
     {
         // Esta función toma los metadatos ya extraídos y genera el XML JATS.
+        // Usa tabs para indentación, igual que pattern.xml
         $e = function ($s) {
             return htmlspecialchars((string)$s, ENT_QUOTES | ENT_XML1, 'UTF-8');
         };
+        $t1 = "\t";
+        $t2 = "\t\t";
+        $t3 = "\t\t\t";
+        $t4 = "\t\t\t\t";
+        $t5 = "\t\t\t\t\t";
+        $t6 = "\t\t\t\t\t\t";
 
         $doi = $meta['doi'] ?? '';
         $lang = $meta['lang'] ?? 'es';
 
-        $journalMeta = "  <journal-meta>\n";
-        $journalMeta .= "    <journal-id journal-id-type=\"nlm-ta\">" . $e($meta['journalAbbrev'] ?? $meta['journalTitle'] ?? '') . "</journal-id>\n";
+        $journalMeta = $t2 . "<journal-meta>\n";
+        $journalMeta .= $t3 . "<journal-id journal-id-type=\"nlm-ta\">" . $e($meta['journalAbbrev'] ?? $meta['journalTitle'] ?? '') . "</journal-id>\n";
         if (!empty($meta['journalIdPublisher'])) {
-            $journalMeta .= "    <journal-id journal-id-type=\"publisher-id\">" . $e($meta['journalIdPublisher']) . "</journal-id>\n";
+            $journalMeta .= $t3 . "<journal-id journal-id-type=\"publisher-id\">" . $e($meta['journalIdPublisher']) . "</journal-id>\n";
         }
-        $journalMeta .= "    <journal-title-group>\n";
-        $journalMeta .= "      <journal-title>" . $e($meta['journalTitle'] ?? '') . "</journal-title>\n";
-        $journalMeta .= "      <abbrev-journal-title abbrev-type=\"publisher\">" . $e($meta['journalAbbrev'] ?? '') . "</abbrev-journal-title>\n";
-        $journalMeta .= "    </journal-title-group>\n";
-        if (!empty($meta['issn_ppub'])) $journalMeta .= "    <issn pub-type=\"ppub\">" . $e($meta['issn_ppub']) . "</issn>\n";
-        if (!empty($meta['issn_epub'])) $journalMeta .= "    <issn pub-type=\"epub\">" . $e($meta['issn_epub']) . "</issn>\n";
-        $journalMeta .= "    <publisher>\n";
-        $journalMeta .= "      <publisher-name>" . $e($meta['publisher'] ?? '') . "</publisher-name>\n";
-        $journalMeta .= "    </publisher>\n";
-        $journalMeta .= "  </journal-meta>";
+        $journalMeta .= $t3 . "<journal-title-group>\n";
+        $journalMeta .= $t4 . "<journal-title>" . $e($meta['journalTitle'] ?? '') . "</journal-title>\n";
+        $journalMeta .= $t4 . "<abbrev-journal-title abbrev-type=\"publisher\">" . $e($meta['journalAbbrev'] ?? '') . "</abbrev-journal-title>\n";
+        $journalMeta .= $t3 . "</journal-title-group>\n";
+        if (!empty($meta['issn_ppub'])) $journalMeta .= $t3 . "<issn pub-type=\"ppub\">" . $e($meta['issn_ppub']) . "</issn>\n";
+        if (!empty($meta['issn_epub'])) $journalMeta .= $t3 . "<issn pub-type=\"epub\">" . $e($meta['issn_epub']) . "</issn>\n";
+        $journalMeta .= $t3 . "<publisher>\n";
+        $journalMeta .= $t4 . "<publisher-name>" . $e($meta['publisher'] ?? '') . "</publisher-name>\n";
+        $journalMeta .= $t3 . "</publisher>\n";
+        $journalMeta .= $t2 . "</journal-meta>";
 
-        $articleMeta = "  <article-meta>\n";
-        if ($doi) $articleMeta .= "    <article-id pub-id-type=\"doi\">" . $e($doi) . "</article-id>\n";
-        $articleMeta .= "    <article-categories>\n";
-        $articleMeta .= "      <subj-group subj-group-type=\"heading\">\n";
-        $articleMeta .= "        <subject>Artículo</subject>\n";
-        $articleMeta .= "      </subj-group>\n";
-        $articleMeta .= "    </article-categories>\n";
-        $articleMeta .= "    <title-group>\n";
-        $articleMeta .= "      <article-title>" . $e($meta['articleTitle'] ?? '') . "</article-title>\n";
+        $articleMeta = $t2 . "<article-meta>\n";
+        if ($doi) $articleMeta .= $t3 . "<article-id pub-id-type=\"doi\">" . $e($doi) . "</article-id>\n";
+        $articleMeta .= $t3 . "<article-categories>\n";
+        $articleMeta .= $t4 . "<subj-group subj-group-type=\"heading\">\n";
+        $articleMeta .= $t5 . "<subject>Artículo</subject>\n";
+        $articleMeta .= $t4 . "</subj-group>\n";
+        $articleMeta .= $t3 . "</article-categories>\n";
+        $articleMeta .= $t3 . "<title-group>\n";
+        $articleMeta .= $t4 . "<article-title>" . $e($meta['articleTitle'] ?? '') . "</article-title>\n";
         if (!empty($meta['articleTitleEn'])) {
-            $articleMeta .= "      <trans-title-group xml:lang=\"en\">\n";
-            $articleMeta .= "        <trans-title>" . $e($meta['articleTitleEn']) . "</trans-title>\n";
-            $articleMeta .= "      </trans-title-group>\n";
+            $articleMeta .= $t4 . "<trans-title-group xml:lang=\"en\">\n";
+            $articleMeta .= $t5 . "<trans-title>" . $e($meta['articleTitleEn']) . "</trans-title>\n";
+            $articleMeta .= $t4 . "</trans-title-group>\n";
         }
-        $articleMeta .= "    </title-group>\n";
+        $articleMeta .= $t3 . "</title-group>\n";
 
-        $articleMeta .= "    <contrib-group>\n";
+        $articleMeta .= $t3 . "<contrib-group>\n";
         // Contribuciones de autor: cada autor se transforma en un contrib-type="author".
         foreach (($meta['authors'] ?? []) as $i => $a) {
             $name = trim($a['name'] ?? '');
@@ -741,18 +748,18 @@ class DocxParser
             $surname = array_pop($parts);
             $given = implode(' ', $parts);
             $n = $i + 1;
-            $articleMeta .= "      <contrib contrib-type=\"author\">\n";
+            $articleMeta .= $t4 . "<contrib contrib-type=\"author\">\n";
             if (!empty($a['orcid'])) {
-                $articleMeta .= "        <contrib-id contrib-id-type=\"orcid\">https://orcid.org/" . $e($a['orcid']) . "</contrib-id>\n";
+                $articleMeta .= $t5 . "<contrib-id contrib-id-type=\"orcid\">https://orcid.org/" . $e($a['orcid']) . "</contrib-id>\n";
             }
-            $articleMeta .= "        <name>\n";
-            $articleMeta .= "          <surname>" . $e($surname) . "</surname>\n";
-            $articleMeta .= "          <given-names>" . $e($given) . "</given-names>\n";
-            $articleMeta .= "        </name>\n";
-            $articleMeta .= "        <xref ref-type=\"aff\" rid=\"aff" . $n . "\"><sup>" . $n . "</sup></xref>\n";
-            $articleMeta .= "      </contrib>\n";
+            $articleMeta .= $t5 . "<name>\n";
+            $articleMeta .= $t6 . "<surname>" . $e($surname) . "</surname>\n";
+            $articleMeta .= $t6 . "<given-names>" . $e($given) . "</given-names>\n";
+            $articleMeta .= $t5 . "</name>\n";
+            $articleMeta .= $t5 . "<xref ref-type=\"aff\" rid=\"aff" . $n . "\"><sup>" . $n . "</sup></xref>\n";
+            $articleMeta .= $t4 . "</contrib>\n";
         }
-        $articleMeta .= "    </contrib-group>\n";
+        $articleMeta .= $t3 . "</contrib-group>\n";
 
         // Afiliaciones: cada entrada numerada se transforma en un <aff> con datos estructurados.
         foreach (($meta['affiliations'] ?? []) as $i => $aff) {
@@ -766,54 +773,54 @@ class DocxParser
                     $affOriginal = rtrim($affOriginal, " ;") . '. ' . $affEmail;
                 }
             }
-            $articleMeta .= "    <aff id=\"aff" . $n . "\">\n";
-            $articleMeta .= "      <label>" . $n . "</label>\n";
-            $articleMeta .= "      <institution content-type=\"original\">" . $e($affOriginal) . "</institution>\n";
+            $articleMeta .= $t3 . "<aff id=\"aff" . $n . "\">\n";
+            $articleMeta .= $t4 . "<label>" . $n . "</label>\n";
+            $articleMeta .= $t4 . "<institution content-type=\"original\">" . $e($affOriginal) . "</institution>\n";
             if (!empty($meta['affiliations_norm'][$i])) {
-                $articleMeta .= "      <institution content-type=\"normalized\">" . $e($meta['affiliations_norm'][$i]) . "</institution>\n";
+                $articleMeta .= $t4 . "<institution content-type=\"normalized\">" . $e($meta['affiliations_norm'][$i]) . "</institution>\n";
             }
             // orgdiv2 (departamento) va antes que orgdiv1 cuando ambos existen.
             if (!empty($meta['affiliations_orgdiv2'][$i])) {
-                $articleMeta .= "      <institution content-type=\"orgdiv2\">" . $e($meta['affiliations_orgdiv2'][$i]) . "</institution>\n";
+                $articleMeta .= $t4 . "<institution content-type=\"orgdiv2\">" . $e($meta['affiliations_orgdiv2'][$i]) . "</institution>\n";
             }
             if (!empty($meta['affiliations_orgdiv1'][$i])) {
-                $articleMeta .= "      <institution content-type=\"orgdiv1\">" . $e($meta['affiliations_orgdiv1'][$i]) . "</institution>\n";
+                $articleMeta .= $t4 . "<institution content-type=\"orgdiv1\">" . $e($meta['affiliations_orgdiv1'][$i]) . "</institution>\n";
             }
             if (!empty($meta['affiliations_orgname'][$i])) {
-                $articleMeta .= "      <institution content-type=\"orgname\">" . $e($meta['affiliations_orgname'][$i]) . "</institution>\n";
+                $articleMeta .= $t4 . "<institution content-type=\"orgname\">" . $e($meta['affiliations_orgname'][$i]) . "</institution>\n";
             }
             if (!empty($meta['affiliations_state'][$i])) {
-                $articleMeta .= "      <addr-line>\n";
-                $articleMeta .= "        <state>" . $e($meta['affiliations_state'][$i]) . "</state>\n";
-                $articleMeta .= "      </addr-line>\n";
+                $articleMeta .= $t4 . "<addr-line>\n";
+                $articleMeta .= $t4 . "<state>" . $e($meta['affiliations_state'][$i]) . "</state>\n";
+                $articleMeta .= $t4 . "</addr-line>\n";
             }
             if (!empty($meta['affiliations_country'][$i])) {
-                $articleMeta .= "      <country country=\"" . $e($meta['affiliations_country'][$i]) . "\">" . $e($meta['affiliations_country_name'][$i] ?? '') . "</country>\n";
+                $articleMeta .= $t4 . "<country country=\"" . $e($meta['affiliations_country'][$i]) . "\">" . $e($meta['affiliations_country_name'][$i] ?? '') . "</country>\n";
             }
             if (!empty($meta['affiliations_email'][$i])) {
-                $articleMeta .= "      <email>" . $e($meta['affiliations_email'][$i]) . "</email>\n";
+                $articleMeta .= $t4 . "<email>" . $e($meta['affiliations_email'][$i]) . "</email>\n";
             }
-            $articleMeta .= "    </aff>\n";
+            $articleMeta .= $t3 . "</aff>\n";
         }
 
         // Notas de autor: conflicto y contribuciones en bloques <fn> separados
         $hasConflict = !empty($meta['conflict']);
         $hasContrib = !empty($meta['contributions']);
         if ($hasConflict || $hasContrib) {
-            $articleMeta .= "    <author-notes>\n";
+            $articleMeta .= $t3 . "<author-notes>\n";
             if ($hasConflict) {
-                $articleMeta .= "      <fn fn-type=\"conflict\" id=\"fn2\">\n";
-                $articleMeta .= "        <label>Conflicto de Intereses</label>\n";
-                $articleMeta .= "        <p>" . $e($meta['conflict']) . "</p>\n";
-                $articleMeta .= "      </fn>\n";
+                $articleMeta .= $t4 . "<fn fn-type=\"conflict\" id=\"fn2\">\n";
+                $articleMeta .= $t4 . "<label>Conflicto de Intereses</label>\n";
+                $articleMeta .= $t4 . "<p>" . $e($meta['conflict']) . "</p>\n";
+                $articleMeta .= $t4 . "</fn>\n";
             }
             if ($hasContrib) {
-                $articleMeta .= "      <fn fn-type=\"equal\" id=\"fn3\">\n";
-                $articleMeta .= "        <label>Contribución autoral</label>\n";
-                $articleMeta .= "        <p>" . $e(implode(' ', $meta['contributions'])) . "</p>\n";
-                $articleMeta .= "      </fn>\n";
+                $articleMeta .= $t4 . "<fn fn-type=\"equal\" id=\"fn3\">\n";
+                $articleMeta .= $t4 . "<label>Contribución autoral</label>\n";
+                $articleMeta .= $t4 . "<p>" . $e(implode(' ', $meta['contributions'])) . "</p>\n";
+                $articleMeta .= $t4 . "</fn>\n";
             }
-            $articleMeta .= "    </author-notes>\n";
+            $articleMeta .= $t3 . "</author-notes>\n";
         }
 
         if (!empty($meta['pubdate'])) {
@@ -821,11 +828,11 @@ class DocxParser
             $day = $parts[0] ?? '';
             $month = $parts[1] ?? '';
             $year = $parts[2] ?? '';
-            $articleMeta .= "    <pub-date date-type=\"pub\" publication-format=\"electronic\">\n";
-            if ($day) $articleMeta .= "      <day>" . $e($day) . "</day>\n";
-            if ($month) $articleMeta .= "      <month>" . $e($month) . "</month>\n";
-            if ($year) $articleMeta .= "      <year>" . $e($year) . "</year>\n";
-            $articleMeta .= "    </pub-date>\n";
+            $articleMeta .= $t3 . "<pub-date date-type=\"pub\" publication-format=\"electronic\">\n";
+            if ($day) $articleMeta .= $t4 . "<day>" . $e($day) . "</day>\n";
+            if ($month) $articleMeta .= $t4 . "<month>" . $e($month) . "</month>\n";
+            if ($year) $articleMeta .= $t4 . "<year>" . $e($year) . "</year>\n";
+            $articleMeta .= $t3 . "</pub-date>\n";
         }
 
         $collectionYear = '';
@@ -835,95 +842,95 @@ class DocxParser
             $collectionYear = $parts[2] ?? '';
         }
         if ($collectionYear) {
-            $articleMeta .= "    <pub-date date-type=\"collection\" publication-format=\"electronic\">\n";
-            $articleMeta .= "      <year>" . $e($collectionYear) . "</year>\n";
-            $articleMeta .= "    </pub-date>\n";
+            $articleMeta .= $t3 . "<pub-date date-type=\"collection\" publication-format=\"electronic\">\n";
+            $articleMeta .= $t4 . "<year>" . $e($collectionYear) . "</year>\n";
+            $articleMeta .= $t3 . "</pub-date>\n";
         }
 
-        if (!empty($meta['volume'])) $articleMeta .= "    <volume>" . $e($meta['volume']) . "</volume>\n";
-        if (!empty($meta['elocation-id'])) $articleMeta .= "    <elocation-id>" . $e($meta['elocation-id']) . "</elocation-id>\n";
+        if (!empty($meta['volume'])) $articleMeta .= $t3 . "<volume>" . $e($meta['volume']) . "</volume>\n";
+        if (!empty($meta['elocation-id'])) $articleMeta .= $t3 . "<elocation-id>" . $e($meta['elocation-id']) . "</elocation-id>\n";
 
         if (!empty($meta['received']) || !empty($meta['revised']) || !empty($meta['accepted'])) {
-            $articleMeta .= "    <history>\n";
+            $articleMeta .= $t3 . "<history>\n";
             if (!empty($meta['received'])) {
                 $d = preg_split('/\s+/', trim($meta['received']));
-                $articleMeta .= "      <date date-type=\"received\">\n";
-                if (!empty($d[0])) $articleMeta .= "        <day>" . $e($d[0]) . "</day>\n";
-                if (!empty($d[1])) $articleMeta .= "        <month>" . $e($d[1]) . "</month>\n";
-                if (!empty($d[2])) $articleMeta .= "        <year>" . $e($d[2]) . "</year>\n";
-                $articleMeta .= "      </date>\n";
+                $articleMeta .= $t4 . "<date date-type=\"received\">\n";
+                if (!empty($d[0])) $articleMeta .= $t4 . "<day>" . $e($d[0]) . "</day>\n";
+                if (!empty($d[1])) $articleMeta .= $t4 . "<month>" . $e($d[1]) . "</month>\n";
+                if (!empty($d[2])) $articleMeta .= $t4 . "<year>" . $e($d[2]) . "</year>\n";
+                $articleMeta .= $t4 . "</date>\n";
             }
             if (!empty($meta['revised'])) {
                 $d = preg_split('/\s+/', trim($meta['revised']));
-                $articleMeta .= "      <date date-type=\"rev-recd\">\n";
-                if (!empty($d[0])) $articleMeta .= "        <day>" . $e($d[0]) . "</day>\n";
-                if (!empty($d[1])) $articleMeta .= "        <month>" . $e($d[1]) . "</month>\n";
-                if (!empty($d[2])) $articleMeta .= "        <year>" . $e($d[2]) . "</year>\n";
-                $articleMeta .= "      </date>\n";
+                $articleMeta .= $t4 . "<date date-type=\"rev-recd\">\n";
+                if (!empty($d[0])) $articleMeta .= $t4 . "<day>" . $e($d[0]) . "</day>\n";
+                if (!empty($d[1])) $articleMeta .= $t4 . "<month>" . $e($d[1]) . "</month>\n";
+                if (!empty($d[2])) $articleMeta .= $t4 . "<year>" . $e($d[2]) . "</year>\n";
+                $articleMeta .= $t4 . "</date>\n";
             }
             if (!empty($meta['accepted'])) {
                 $d = preg_split('/\s+/', trim($meta['accepted']));
-                $articleMeta .= "      <date date-type=\"accepted\">\n";
-                if (!empty($d[0])) $articleMeta .= "        <day>" . $e($d[0]) . "</day>\n";
-                if (!empty($d[1])) $articleMeta .= "        <month>" . $e($d[1]) . "</month>\n";
-                if (!empty($d[2])) $articleMeta .= "        <year>" . $e($d[2]) . "</year>\n";
-                $articleMeta .= "      </date>\n";
+                $articleMeta .= $t4 . "<date date-type=\"accepted\">\n";
+                if (!empty($d[0])) $articleMeta .= $t4 . "<day>" . $e($d[0]) . "</day>\n";
+                if (!empty($d[1])) $articleMeta .= $t4 . "<month>" . $e($d[1]) . "</month>\n";
+                if (!empty($d[2])) $articleMeta .= $t4 . "<year>" . $e($d[2]) . "</year>\n";
+                $articleMeta .= $t4 . "</date>\n";
             }
-            $articleMeta .= "    </history>\n";
+            $articleMeta .= $t3 . "</history>\n";
         }
 
-        $articleMeta .= "    <permissions>\n";
-        $articleMeta .= "      <license license-type=\"open-access\" xlink:href=\"https://creativecommons.org/licenses/by/4.0/\" xml:lang=\"" . $e($lang) . "\">\n";
-        $articleMeta .= "        <license-p>Este es un artículo publicado en acceso abierto bajo una licencia Creative Commons</license-p>\n";
-        $articleMeta .= "      </license>\n";
-        $articleMeta .= "    </permissions>\n";
+        $articleMeta .= $t3 . "<permissions>\n";
+        $articleMeta .= $t4 . "<license license-type=\"open-access\" xlink:href=\"https://creativecommons.org/licenses/by/4.0/\" xml:lang=\"" . $e($lang) . "\">\n";
+        $articleMeta .= $t4 . "<license-p>Este es un artículo publicado en acceso abierto bajo una licencia Creative Commons</license-p>\n";
+        $articleMeta .= $t4 . "</license>\n";
+        $articleMeta .= $t3 . "</permissions>\n";
 
         if (!empty($meta['abstractEs'])) {
-            $articleMeta .= "    <abstract>\n";
-            $articleMeta .= "      <title>Resumen</title>\n";
-            $articleMeta .= "      <p>" . $this->escapeXmlWithItalic($meta['abstractEs']) . "</p>\n";
-            $articleMeta .= "    </abstract>\n";
+            $articleMeta .= $t3 . "<abstract>\n";
+            $articleMeta .= $t4 . "<title>Resumen</title>\n";
+            $articleMeta .= $t4 . "<p>" . $this->escapeXmlWithItalic($meta['abstractEs']) . "</p>\n";
+            $articleMeta .= $t3 . "</abstract>\n";
         }
         if (!empty($meta['abstractEn'])) {
-            $articleMeta .= "    <trans-abstract xml:lang=\"en\">\n";
-            $articleMeta .= "      <title>Abstract</title>\n";
-            $articleMeta .= "      <p>" . $this->escapeXmlWithItalic($meta['abstractEn']) . "</p>\n";
-            $articleMeta .= "    </trans-abstract>\n";
+            $articleMeta .= $t3 . "<trans-abstract xml:lang=\"en\">\n";
+            $articleMeta .= $t4 . "<title>Abstract</title>\n";
+            $articleMeta .= $t4 . "<p>" . $this->escapeXmlWithItalic($meta['abstractEn']) . "</p>\n";
+            $articleMeta .= $t3 . "</trans-abstract>\n";
         }
 
         if (!empty($meta['kwdsEs'])) {
-            $articleMeta .= "    <kwd-group xml:lang=\"es\">\n";
-            $articleMeta .= "      <title>Palabras claves:</title>\n";
+            $articleMeta .= $t3 . "<kwd-group xml:lang=\"es\">\n";
+            $articleMeta .= $t4 . "<title>Palabras claves:</title>\n";
             foreach ($meta['kwdsEs'] as $k) {
-                $articleMeta .= "      <kwd>" . $e($k) . "</kwd>\n";
+                $articleMeta .= $t4 . "<kwd>" . $e($k) . "</kwd>\n";
             }
-            $articleMeta .= "    </kwd-group>\n";
+            $articleMeta .= $t3 . "</kwd-group>\n";
         }
         if (!empty($meta['kwdsEn'])) {
-            $articleMeta .= "    <kwd-group xml:lang=\"en\">\n";
-            $articleMeta .= "      <title>Keywords:</title>\n";
+            $articleMeta .= $t3 . "<kwd-group xml:lang=\"en\">\n";
+            $articleMeta .= $t4 . "<title>Keywords:</title>\n";
             foreach ($meta['kwdsEn'] as $k) {
-                $articleMeta .= "      <kwd>" . $e($k) . "</kwd>\n";
+                $articleMeta .= $t4 . "<kwd>" . $e($k) . "</kwd>\n";
             }
-            $articleMeta .= "    </kwd-group>\n";
+            $articleMeta .= $t3 . "</kwd-group>\n";
         }
 
         if (!empty($meta['funding'])) {
-            $articleMeta .= "    <funding-group>\n";
+            $articleMeta .= $t3 . "<funding-group>\n";
             foreach ($meta['funding'] as $f) {
                 $source = is_array($f) ? ($f['source'] ?? '') : $f;
                 $awardId = is_array($f) ? ($f['awardId'] ?? '') : '';
-                $articleMeta .= "      <award-group award-type=\"contract\">\n";
-                $articleMeta .= "        <funding-source>" . $e($source) . "</funding-source>\n";
+                $articleMeta .= $t4 . "<award-group award-type=\"contract\">\n";
+                $articleMeta .= $t4 . "<funding-source>" . $e($source) . "</funding-source>\n";
                 if ($awardId !== '') {
-                    $articleMeta .= "        <award-id>" . $e($awardId) . "</award-id>\n";
+                    $articleMeta .= $t4 . "<award-id>" . $e($awardId) . "</award-id>\n";
                 }
-                $articleMeta .= "      </award-group>\n";
+                $articleMeta .= $t4 . "</award-group>\n";
             }
             if (!empty($meta['fundingStatement'])) {
-                $articleMeta .= "      <funding-statement>" . $e($meta['fundingStatement']) . "</funding-statement>\n";
+                $articleMeta .= $t4 . "<funding-statement>" . $e($meta['fundingStatement']) . "</funding-statement>\n";
             }
-            $articleMeta .= "    </funding-group>\n";
+            $articleMeta .= $t3 . "</funding-group>\n";
         }
 
         $figCount = isset($meta['figCount']) && $meta['figCount'] !== '' ? $meta['figCount'] : 0;
@@ -931,22 +938,22 @@ class DocxParser
         $equationCount = isset($meta['equationCount']) && $meta['equationCount'] !== '' ? $meta['equationCount'] : 0;
         $refCount = isset($meta['refCount']) && $meta['refCount'] !== '' ? $meta['refCount'] : 0;
         $pageCount = isset($meta['pageCount']) && $meta['pageCount'] !== '' ? $meta['pageCount'] : 1;
-        $articleMeta .= "    <counts>\n";
-        $articleMeta .= "      <fig-count count=\"" . $e($figCount) . "\"/>\n";
-        $articleMeta .= "      <table-count count=\"" . $e($tableCount) . "\"/>\n";
-        $articleMeta .= "      <equation-count count=\"" . $e($equationCount) . "\"/>\n";
-        $articleMeta .= "      <ref-count count=\"" . $e($refCount) . "\"/>\n";
-        $articleMeta .= "      <page-count count=\"" . $e($pageCount) . "\"/>\n";
-        $articleMeta .= "    </counts>\n";
+        $articleMeta .= $t3 . "<counts>\n";
+        $articleMeta .= $t4 . "<fig-count count=\"" . $e($figCount) . "\"/>\n";
+        $articleMeta .= $t4 . "<table-count count=\"" . $e($tableCount) . "\"/>\n";
+        $articleMeta .= $t4 . "<equation-count count=\"" . $e($equationCount) . "\"/>\n";
+        $articleMeta .= $t4 . "<ref-count count=\"" . $e($refCount) . "\"/>\n";
+        $articleMeta .= $t4 . "<page-count count=\"" . $e($pageCount) . "\"/>\n";
+        $articleMeta .= $t3 . "</counts>\n";
 
-        $articleMeta .= "  </article-meta>\n";
+        $articleMeta .= $t2 . "</article-meta>\n";
 
         $xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
         $xml .= "<!DOCTYPE article PUBLIC \"-//NLM//DTD JATS (Z39.96) Journal Publishing DTD v1.1 20121330//EN\"\n";
         $xml .= "  \"https://jats.nlm.nih.gov/publishing/1.1/JATS-journalpublishing1-1.dtd\">\n";
         $xml .= "<article xmlns:mml=\"http://www.w3.org/1998/Math/MathML\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" article-type=\"research-article\" dtd-version=\"1.1\" specific-use=\"sps-1.9\" xml:lang=\"" . $e($lang) . "\">\n";
         $xml .= "<front>\n";
-        $xml .= $journalMeta . "\n\n";
+        $xml .= $journalMeta . "\n";
         $xml .= $articleMeta . "</front>\n";
         $xml .= "<body>\n  <!-- contenido del cuerpo omitido -->\n</body>\n";
         $xml .= "<back>\n  <!-- referencias y notas omitidas -->\n</back>\n";
