@@ -251,6 +251,17 @@ copyBtn.addEventListener('click', () => {
 // ── Download ──────────────────────────────────────────────────────────────────
 downloadBtn.addEventListener('click', () => {
   if (!generatedXml) return;
+  // Si está cargado el patrón, descargar directamente el archivo sin procesar
+  if (generatedFilename === 'patron_scielo_article') {
+    const a = document.createElement('a');
+    a.href = 'pattern.xml';
+    a.download = 'pattern.xml';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    return;
+  }
+  // Para archivos generados, crear blob
   const blob = new Blob([generatedXml], { type: 'application/xml' });
   const url  = URL.createObjectURL(blob);
   const a    = Object.assign(document.createElement('a'), { href: url, download: generatedFilename + '.xml' });

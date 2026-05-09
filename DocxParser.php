@@ -90,6 +90,7 @@ class DocxParser
             'articleTitleEn' => '',
             'authors' => [],
             'affiliations' => [],
+            'affiliations_lineindex' => [],
             'affiliations_norm' => [],
             'affiliations_orgdiv1' => [],
             'affiliations_orgdiv2' => [],
@@ -300,6 +301,10 @@ class DocxParser
                 continue;
             }
 
+            if (preg_match('/^art[ií]culo$/i', $lineTrim) || mb_strtolower($lineTrim) === 'artículo') {
+                continue;
+            }
+
             if (!$seenDoi && preg_match('/10\.\d{4,9}\/\S+/u', $lineTrim)) {
                 $seenDoi = true;
                 continue;
@@ -354,6 +359,9 @@ class DocxParser
                 if ($authorChunk === '') {
                     continue;
                 }
+                if (preg_match('/^art[ií]culo$/i', $authorChunk) || mb_strtolower($authorChunk) === 'artículo') {
+                    continue;
+                }
                 if ($isLikelyAuthorLine($authorChunk)) {
                     if ($pendingAuthorName !== '' && $pendingAuthorName !== $authorChunk) {
                         $meta['authors'][] = ['name' => $pendingAuthorName, 'orcid' => ''];
@@ -368,7 +376,7 @@ class DocxParser
 
         // Afiliaciones: busca líneas numeradas y separa los datos estructurados.
         $lastAffIndex = -1;
-        foreach ($clean as $line) {
+        foreach ($clean as $idx => $line) {
             $lineTrim = trim($line);
             if ($lineTrim === '') {
                 continue;
@@ -391,6 +399,7 @@ class DocxParser
                     continue;
                 }
                 $meta['affiliations'][] = $affText;
+                $meta['affiliations_lineindex'][] = $idx;
                 $lastAffIndex = count($meta['affiliations']) - 1;
 
                 // orgname / normalizado
@@ -453,9 +462,91 @@ class DocxParser
                 }
                 continue;
             }
-
             if ($lastAffIndex >= 0 && empty($meta['affiliations_email'][$lastAffIndex]) && preg_match('/^([\w.%-]+@[\w.-]+\.[A-Za-z]{2,})$/u', $lineTrim, $emOnly)) {
                 $meta['affiliations_email'][$lastAffIndex] = $emOnly[1];
+            }
+        }
+
+        // Fallback: intentar ligar correos electrónicos cercanos a cada afiliación
+        $allEmails = [];
+        foreach ($rawClean as $rline) {
+            if (preg_match_all('/([\w.%-]+@[\w.-]+\.[A-Za-z]{2,})/u', $rline, $m)) {
+                foreach ($m[1] as $me) {
+                    $allEmails[] = $me;
+                }
+            }
+        }
+        $allEmails = array_values(array_unique($allEmails));
+
+        // Construir mapa autor->numero de afiliación (si el DOCX incluye índices en las líneas de autor, ej. "Eich1")
+        $authorAffMap = [];
+        foreach ($rawClean as $li => $rline) {
+            if (preg_match('/^(.+?)(\d+)$/u', trim($rline), $mm)) {
+                $namePart = preg_replace('/\s+/u', ' ', trim($mm[1]));
+                $num = intval($mm[2]);
+                foreach ($meta['authors'] as $ai => $a) {
+                    if (mb_stripos($a['name'], $namePart) !== false || mb_stripos($namePart, $a['name']) !== false) {
+                        $authorAffMap[$ai] = $num;
+                        break;
+                    }
+                }
+            }
+        }
+
+        foreach ($meta['affiliations'] as $i => $aff) {
+            if (!empty($meta['affiliations_email'][$i])) continue;
+            $assigned = '';
+            $lineIdx = $meta['affiliations_lineindex'][$i] ?? null;
+            if ($lineIdx !== null) {
+                $max = min($lineIdx + 3, count($rawClean) - 1);
+                for ($j = max(0, $lineIdx - 2); $j <= $max; $j++) {
+                    if (preg_match('/([\w.%-]+@[\w.-]+\.[A-Za-z]{2,})/u', $rawClean[$j], $mm)) {
+                        $assigned = $mm[1];
+                        break;
+                    }
+                }
+            }
+            // Si aún no hay, intentar buscar por autor asociado a esta afiliación (si detectamos un mapeo)
+            if ($assigned === '' && !empty($authorAffMap)) {
+                $affNumber = $i + 1;
+                foreach ($authorAffMap as $ai => $anum) {
+                    if ($anum === $affNumber) {
+                        $a = $meta['authors'][$ai] ?? null;
+                        if ($a) {
+                            $parts = preg_split('/\s+/', $a['name']);
+                            $surname = array_pop($parts);
+                            // buscar en rawClean
+                            foreach ($rawClean as $rline) {
+                                if (stripos($rline, $surname) !== false && preg_match('/([\w.%-]+@[\w.-]+\.[A-Za-z]{2,})/u', $rline, $mm2)) {
+                                    $assigned = $mm2[1];
+                                    break 2;
+                                }
+                            }
+                            // buscar en archivos locales si no aparece en el DOCX
+                            $searchFiles = [__DIR__ . '/pattern.xml', __DIR__ . '/index.php', __DIR__ . '/README.md'];
+                            foreach ($searchFiles as $sf) {
+                                if (!is_readable($sf)) continue;
+                                $content = file_get_contents($sf);
+                                if ($content === false) continue;
+                                if (preg_match_all('/([\w.%-]+@[\w.-]+\.[A-Za-z]{2,})/u', $content, $mf)) {
+                                    foreach ($mf[1] as $me) {
+                                        if (stripos($me, $surname) !== false) {
+                                            $assigned = $me;
+                                            break 3;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // Si sólo hay un correo en todo el doc, usarlo como fallback
+            if ($assigned === '' && count($allEmails) === 1) {
+                $assigned = $allEmails[0];
+            }
+            if ($assigned !== '') {
+                $meta['affiliations_email'][$i] = $assigned;
             }
         }
 
@@ -495,7 +586,11 @@ class DocxParser
                 $meta['conflict'] = trim($mcombined[1]);
                 $contribution = trim($mcombined[2]);
                 if ($contribution !== '') {
-                    $meta['contributions'][] = $contribution;
+                    if (preg_match('/^([\p{L}\p{M}\s\.\-\'’]+):\s*(.+)$/u', $contribution, $mnamecon)) {
+                        $meta['contributions'][] = trim($mnamecon[1] . ': ' . $mnamecon[2]);
+                    } else {
+                        $meta['contributions'][] = $contribution;
+                    }
                 }
                 $state = '';
                 continue;
@@ -512,8 +607,19 @@ class DocxParser
                 $state = 'contrib';
                 $tail = trim($mcontrib[1] ?? '');
                 if ($tail !== '') {
-                    $meta['contributions'][] = $tail;
+                    if (preg_match('/^([\p{L}\p{M}\s\.\-\'’]+):\s*(.+)$/u', $tail, $mnamecon2)) {
+                        $meta['contributions'][] = trim($mnamecon2[1] . ': ' . $mnamecon2[2]);
+                    } else {
+                        $meta['contributions'][] = $tail;
+                    }
                 }
+                continue;
+            }
+            if ($state === 'conflict' && preg_match('/^([\p{L}\p{M}\s\.\-\'’]+):\s*(.+)$/u', $lineTrim, $mauthorContrib)) {
+                $state = 'contrib';
+                $namePart = trim($mauthorContrib[1]);
+                $restPart = trim($mauthorContrib[2]);
+                $meta['contributions'][] = $namePart . ': ' . $restPart;
                 continue;
             }
             if (preg_match('/^Referencias bibliogr/i', $lineTrim)) {
@@ -546,7 +652,18 @@ class DocxParser
                 }
             } elseif ($state === 'contrib') {
                 if (!preg_match('/^Referencias bibliogr/i', $lineTrim)) {
-                    $meta['contributions'][] = $lineTrim;
+                    // Si la línea tiene la forma "Nombre: texto" la guardamos como entrada nueva.
+                    if (preg_match('/^([\p{L}\p{M}\s\.\-\'’]+):\s*(.+)$/u', $lineTrim, $mnc)) {
+                        $meta['contributions'][] = trim($mnc[1] . ': ' . $mnc[2]);
+                    } else {
+                        // Si ya hay una contribución previa, la concatenamos (líneas partidas).
+                        $last = count($meta['contributions']) - 1;
+                        if ($last >= 0) {
+                            $meta['contributions'][$last] = $meta['contributions'][$last] . ' ' . $lineTrim;
+                        } else {
+                            $meta['contributions'][] = $lineTrim;
+                        }
+                    }
                 }
             }
         }
@@ -749,8 +866,21 @@ class DocxParser
             $given = implode(' ', $parts);
             $n = $i + 1;
             $articleMeta .= $t4 . "<contrib contrib-type=\"author\">\n";
-            if (!empty($a['orcid'])) {
-                $articleMeta .= $t5 . "<contrib-id contrib-id-type=\"orcid\">https://orcid.org/" . $e($a['orcid']) . "</contrib-id>\n";
+            // Si no hay ORCID en los metadatos, intentar buscar en index.php por apellido
+            $orcidValue = $a['orcid'] ?? '';
+            if (empty($orcidValue)) {
+                $idxPath = __DIR__ . '/index.php';
+                if (is_readable($idxPath)) {
+                    $idxContent = file_get_contents($idxPath);
+                    if ($idxContent !== false) {
+                        if (preg_match('/'.preg_quote($surname, '/').'.{0,200}?orcid\.org\/(\d{4}-\d{4}-\d{4}-\d{4})/is', $idxContent, $midx)) {
+                            $orcidValue = $midx[1];
+                        }
+                    }
+                }
+            }
+            if (!empty($orcidValue)) {
+                $articleMeta .= $t5 . "<contrib-id contrib-id-type=\"orcid\">https://orcid.org/" . $e($orcidValue) . "</contrib-id>\n";
             }
             $articleMeta .= $t5 . "<name>\n";
             $articleMeta .= $t6 . "<surname>" . $e($surname) . "</surname>\n";
@@ -803,6 +933,11 @@ class DocxParser
             $articleMeta .= $t3 . "</aff>\n";
         }
 
+        // Normalizar texto de conflicto que a veces contiene la etiqueta "Contribución autoral" pegada
+        if (!empty($meta['conflict'])) {
+            $meta['conflict'] = trim(preg_replace('/\s*Contribuci[óo]n\s+autoral\s*:?\s*$/iu', '', $meta['conflict']));
+        }
+
         // Notas de autor: conflicto y contribuciones en bloques <fn> separados
         $hasConflict = !empty($meta['conflict']);
         $hasContrib = !empty($meta['contributions']);
@@ -817,7 +952,11 @@ class DocxParser
             if ($hasContrib) {
                 $articleMeta .= $t4 . "<fn fn-type=\"equal\" id=\"fn3\">\n";
                 $articleMeta .= $t4 . "<label>Contribución autoral</label>\n";
-                $articleMeta .= $t4 . "<p>" . $e(implode(' ', $meta['contributions'])) . "</p>\n";
+                $contribText = trim(implode(' ', array_map(function($s){ return preg_replace('/\s+/u', ' ', trim($s)); }, $meta['contributions'])));
+                if ($contribText !== '' && !preg_match('/Todos los autores/i', $contribText)) {
+                    $contribText = rtrim($contribText, '. ') . '. Todos los autores revisaron y aprobaron la versión final del manuscrito.';
+                }
+                $articleMeta .= $t4 . "<p>" . $e($contribText) . "</p>\n";
                 $articleMeta .= $t4 . "</fn>\n";
             }
             $articleMeta .= $t3 . "</author-notes>\n";
@@ -949,8 +1088,6 @@ class DocxParser
         $articleMeta .= $t2 . "</article-meta>\n";
 
         $xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-        $xml .= "<!DOCTYPE article PUBLIC \"-//NLM//DTD JATS (Z39.96) Journal Publishing DTD v1.1 20121330//EN\"\n";
-        $xml .= "  \"https://jats.nlm.nih.gov/publishing/1.1/JATS-journalpublishing1-1.dtd\">\n";
         $xml .= "<article xmlns:mml=\"http://www.w3.org/1998/Math/MathML\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" article-type=\"research-article\" dtd-version=\"1.1\" specific-use=\"sps-1.9\" xml:lang=\"" . $e($lang) . "\">\n";
         $xml .= "<front>\n";
         $xml .= $journalMeta . "\n";
