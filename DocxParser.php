@@ -47,11 +47,23 @@ class DocxParser
 
         $lines = [];
         foreach ($xpath->query('//w:p') as $p) {
-            $texts = [];
-            foreach ($xpath->query('.//w:t', $p) as $t) {
-                $texts[] = $t->nodeValue;
+            $segments = [];
+            foreach ($xpath->query('./w:r', $p) as $r) {
+                $texts = [];
+                foreach ($xpath->query('.//w:t', $r) as $t) {
+                    $texts[] = $t->nodeValue;
+                }
+                $segment = implode('', $texts);
+                if ($segment === '') {
+                    continue;
+                }
+                $isItalic = $xpath->query('./w:rPr/w:i | ./w:rPr/w:iCs', $r)->length > 0;
+                if ($isItalic) {
+                    $segment = '<italic>' . htmlspecialchars($segment, ENT_QUOTES | ENT_XML1, 'UTF-8') . '</italic>';
+                }
+                $segments[] = $segment;
             }
-            $line = trim(implode('', $texts));
+            $line = trim(implode('', $segments));
             if ($line !== '') {
                 $lines[] = $line;
             }
@@ -109,7 +121,12 @@ class DocxParser
             'refCount' => ''
         ];
 
-        $clean = array_values(array_filter(array_map('trim', $lines), function ($v) {
+        $clean = array_values(array_filter(array_map(function ($v) {
+            return trim(strip_tags($v));
+        }, $lines), function ($v) {
+            return $v !== '';
+        }));
+        $rawClean = array_values(array_filter(array_map('trim', $lines), function ($v) {
             return $v !== '';
         }));
 
@@ -254,16 +271,103 @@ class DocxParser
             }
         }
 
-        // Autores: detecta líneas con nombre + número + ORCID.
-        foreach ($clean as $line) {
-            if (preg_match('/^(.+?)(\d+)\s+https?:\/\/orcid\.org\/(\S+)/u', $line, $m)) {
-                $name = trim($m[1]);
-                $orcid = trim($m[3]);
-                $meta['authors'][] = ['name' => $name, 'orcid' => $orcid];
+        // Autores: acepta nombre y ORCID en la misma línea o en líneas separadas.
+        $pendingAuthorName = '';
+        $authorArea = false;
+        $authorAreaClosed = false;
+        $seenDoi = false;
+        $normalizeAuthorName = function ($text) {
+            $text = trim(preg_replace('/\s+/u', ' ', $text));
+            $text = preg_replace('/(?:\s*[,;]?\s*[\d\x{00B9}\x{00B2}\x{00B3}\x{2070}-\x{2079}]+)+$/u', '', $text);
+            $text = preg_replace('/[\s\p{P}\p{S}]+$/u', '', $text);
+            return trim($text);
+        };
+        $isLikelyAuthorLine = function ($text) {
+            if (!preg_match('/\p{L}/u', $text)) {
+                return false;
             }
+            if (preg_match('/https?:\/\/|orcid\.org|@|doi\b/i', $text)) {
+                return false;
+            }
+            if (preg_match('/\b(Universidad|Universidade|University|Instituto|Institute|Departamento|Department|Programa|Faculty|Facultad|Centro|Hospital|Laboratorio|Lab\.?)/iu', $text)) {
+                return false;
+            }
+            return preg_match('/^[\p{L}\p{M}][\p{L}\p{M}\s\-\'\x{2019}\.\,;\(\)\d\x{00B9}\x{00B2}\x{00B3}\x{2070}-\x{2079}]+$/u', $text) === 1;
+        };
+        foreach ($rawClean as $line) {
+            $lineTrim = trim(strip_tags($line));
+            if ($lineTrim === '') {
+                continue;
+            }
+
+            if (!$seenDoi && preg_match('/10\.\d{4,9}\/\S+/u', $lineTrim)) {
+                $seenDoi = true;
+                continue;
+            }
+            if (!$seenDoi) {
+                continue;
+            }
+
+            if (preg_match('/^(Resumen|Abstract|Palabras\s+claves?|Keywords|Financiamiento|Referencias bibliogr(?:a?ficas)?|Referencias|References?|Introducción|Introduction)\b/i', $lineTrim)) {
+                $authorArea = false;
+                $authorAreaClosed = true;
+                continue;
+            }
+            if ($authorAreaClosed) {
+                continue;
+            }
+            if (!$authorArea) {
+                $candidateLine = false;
+                if (preg_match('/https?:\/\/orcid\.org\//i', $lineTrim)) {
+                    $candidateLine = true;
+                } else {
+                    foreach (preg_split('/\s*;\s*/u', $lineTrim) as $authorChunk) {
+                        $authorChunk = $normalizeAuthorName($authorChunk);
+                        if ($authorChunk !== '' && $isLikelyAuthorLine($authorChunk)) {
+                            $candidateLine = true;
+                            break;
+                        }
+                    }
+                }
+                if (!$candidateLine) {
+                    continue;
+                }
+                $authorArea = true;
+            }
+
+            if (preg_match('/https?:\/\/orcid\.org\/(\S+)/i', $lineTrim, $morcid)) {
+                $orcid = trim($morcid[1]);
+                $name = trim(preg_replace('/https?:\/\/orcid\.org\/\S+/i', '', $lineTrim));
+                $name = $normalizeAuthorName($name);
+                if ($name === '' && $pendingAuthorName !== '') {
+                    $name = $pendingAuthorName;
+                }
+                if ($name !== '') {
+                    $meta['authors'][] = ['name' => $name, 'orcid' => $orcid];
+                }
+                $pendingAuthorName = '';
+                continue;
+            }
+
+            foreach (preg_split('/\s*;\s*/u', $lineTrim) as $authorChunk) {
+                $authorChunk = $normalizeAuthorName($authorChunk);
+                if ($authorChunk === '') {
+                    continue;
+                }
+                if ($isLikelyAuthorLine($authorChunk)) {
+                    if ($pendingAuthorName !== '' && $pendingAuthorName !== $authorChunk) {
+                        $meta['authors'][] = ['name' => $pendingAuthorName, 'orcid' => ''];
+                    }
+                    $pendingAuthorName = $authorChunk;
+                }
+            }
+        }
+        if ($pendingAuthorName !== '') {
+            $meta['authors'][] = ['name' => $pendingAuthorName, 'orcid' => ''];
         }
 
         // Afiliaciones: busca líneas numeradas y separa los datos estructurados.
+        $lastAffIndex = -1;
         foreach ($clean as $line) {
             $lineTrim = trim($line);
             if ($lineTrim === '') {
@@ -287,6 +391,7 @@ class DocxParser
                     continue;
                 }
                 $meta['affiliations'][] = $affText;
+                $lastAffIndex = count($meta['affiliations']) - 1;
 
                 // orgname / normalizado
                 if (preg_match('/(Universidade[^.,;]+|Universidad[^.,;]+|University[^.,;]+)/u', $affText, $org)) {
@@ -308,17 +413,23 @@ class DocxParser
 
                 $orgdiv1 = '';
                 $orgdiv2 = '';
-                if (!empty($departmentMatches)) {
+                $departmentPos = mb_strpos($affText, 'Departamento');
+                $programPos = mb_strpos($affText, 'Programa');
+                $semicolonPos = mb_strpos($affText, ';');
+                if (!empty($programMatches) && !empty($departmentMatches)) {
+                    if ($semicolonPos !== false && $programPos !== false && $departmentPos !== false && $programPos > $departmentPos) {
+                        $orgdiv1 = $programMatches[0];
+                        $orgdiv2 = $departmentMatches[0];
+                    } else {
+                        $orgdiv1 = $departmentMatches[0];
+                        $orgdiv2 = '';
+                    }
+                } elseif (!empty($departmentMatches)) {
                     $orgdiv1 = $departmentMatches[0];
                     $orgdiv2 = $departmentMatches[1] ?? '';
                 } elseif (!empty($programMatches)) {
                     $orgdiv1 = $programMatches[0];
-                    $orgdiv2 = $programMatches[1] ?? '';
-                }
-
-                $idx = count($meta['affiliations']) - 1;
-                if (!empty($programMatches) && !empty($departmentMatches)) {
-                    $meta['affiliations_orgname'][$idx] = $programMatches[0];
+                    $orgdiv2 = '';
                 }
 
                 $meta['affiliations_orgdiv1'][] = $orgdiv1;
@@ -340,22 +451,28 @@ class DocxParser
                 } else {
                     $meta['affiliations_email'][] = '';
                 }
+                continue;
+            }
+
+            if ($lastAffIndex >= 0 && empty($meta['affiliations_email'][$lastAffIndex]) && preg_match('/^([\w.%-]+@[\w.-]+\.[A-Za-z]{2,})$/u', $lineTrim, $emOnly)) {
+                $meta['affiliations_email'][$lastAffIndex] = $emOnly[1];
             }
         }
 
         // Abstracts, keywords, financiamiento, conflicto y contribuciones.
         // Esta sección usa un estado para saber qué texto se está acumulando.
         $state = '';
-        foreach ($clean as $line) {
+        foreach ($clean as $idx => $line) {
             $lineTrim = trim($line);
+            $rawLineTrim = trim($rawClean[$idx] ?? $lineTrim);
             if (preg_match('/^Resumen\s*:/i', $lineTrim)) {
                 $state = 'abstract_es';
-                $meta['abstractEs'] = trim(preg_replace('/^Resumen\s*:/i', '', $lineTrim));
+                $meta['abstractEs'] = trim(preg_replace('/^Resumen\s*:/i', '', $rawLineTrim));
                 continue;
             }
             if (preg_match('/^Abstract\s*:/i', $lineTrim)) {
                 $state = 'abstract_en';
-                $meta['abstractEn'] = trim(preg_replace('/^Abstract\s*:/i', '', $lineTrim));
+                $meta['abstractEn'] = trim(preg_replace('/^Abstract\s*:/i', '', $rawLineTrim));
                 continue;
             }
             if (preg_match('/^Palabras\s+claves?\s*:/i', $lineTrim)) {
@@ -406,11 +523,11 @@ class DocxParser
 
             if ($state === 'abstract_es') {
                 if (!preg_match('/^Palabras\s+claves?\s*:/i', $lineTrim)) {
-                    $meta['abstractEs'] = trim($meta['abstractEs'] . ' ' . $lineTrim);
+                    $meta['abstractEs'] = trim($meta['abstractEs'] . ' ' . $rawLineTrim);
                 }
             } elseif ($state === 'abstract_en') {
                 if (!preg_match('/^Keywords\s*:/i', $lineTrim)) {
-                    $meta['abstractEn'] = trim($meta['abstractEn'] . ' ' . $lineTrim);
+                    $meta['abstractEn'] = trim($meta['abstractEn'] . ' ' . $rawLineTrim);
                 }
             } elseif ($state === 'funding') {
                 if (!preg_match('/^Conflicto de Intereses$/i', $lineTrim)) {
@@ -558,11 +675,11 @@ class DocxParser
         $inRefs = false;
         $refCount = 0;
         foreach ($clean as $line) {
-            if (preg_match('/^Referencias bibliogr/i', $line)) {
+            if (preg_match('/^(Referencias bibliogr(?:a?ficas)?|Referencias|References?)\b/i', $line)) {
                 $inRefs = true;
                 continue;
             }
-            if ($inRefs && preg_match('/^\d+\./', $line)) {
+            if ($inRefs && preg_match('/^(?:\[\d+\]|\d+[\.\)])\s+/u', $line)) {
                 $refCount++;
             }
         }
@@ -640,19 +757,27 @@ class DocxParser
         // Afiliaciones: cada entrada numerada se transforma en un <aff> con datos estructurados.
         foreach (($meta['affiliations'] ?? []) as $i => $aff) {
             $n = $i + 1;
+            $affOriginal = $aff;
+            $affEmail = $meta['affiliations_email'][$i] ?? '';
+            if ($affEmail !== '' && stripos($affOriginal, $affEmail) === false) {
+                if (preg_match('/[\.!?]\s*$/u', $affOriginal)) {
+                    $affOriginal = rtrim($affOriginal) . ' ' . $affEmail;
+                } else {
+                    $affOriginal = rtrim($affOriginal, " ;") . '. ' . $affEmail;
+                }
+            }
             $articleMeta .= "    <aff id=\"aff" . $n . "\">\n";
             $articleMeta .= "      <label>" . $n . "</label>\n";
-            $articleMeta .= "      <institution content-type=\"original\">" . $e($aff) . "</institution>\n";
+            $articleMeta .= "      <institution content-type=\"original\">" . $e($affOriginal) . "</institution>\n";
             if (!empty($meta['affiliations_norm'][$i])) {
                 $articleMeta .= "      <institution content-type=\"normalized\">" . $e($meta['affiliations_norm'][$i]) . "</institution>\n";
             }
-            // orgdiv1 (programa o división superior) va primero
-            if (!empty($meta['affiliations_orgdiv1'][$i])) {
-                $articleMeta .= "      <institution content-type=\"orgdiv1\">" . $e($meta['affiliations_orgdiv1'][$i]) . "</institution>\n";
-            }
-            // orgdiv2 (departamento o división inferior) va segundo
+            // orgdiv2 (departamento) va antes que orgdiv1 cuando ambos existen.
             if (!empty($meta['affiliations_orgdiv2'][$i])) {
                 $articleMeta .= "      <institution content-type=\"orgdiv2\">" . $e($meta['affiliations_orgdiv2'][$i]) . "</institution>\n";
+            }
+            if (!empty($meta['affiliations_orgdiv1'][$i])) {
+                $articleMeta .= "      <institution content-type=\"orgdiv1\">" . $e($meta['affiliations_orgdiv1'][$i]) . "</institution>\n";
             }
             if (!empty($meta['affiliations_orgname'][$i])) {
                 $articleMeta .= "      <institution content-type=\"orgname\">" . $e($meta['affiliations_orgname'][$i]) . "</institution>\n";
@@ -756,13 +881,13 @@ class DocxParser
         if (!empty($meta['abstractEs'])) {
             $articleMeta .= "    <abstract>\n";
             $articleMeta .= "      <title>Resumen</title>\n";
-            $articleMeta .= "      <p>" . $e($meta['abstractEs']) . "</p>\n";
+            $articleMeta .= "      <p>" . $this->escapeXmlWithItalic($meta['abstractEs']) . "</p>\n";
             $articleMeta .= "    </abstract>\n";
         }
         if (!empty($meta['abstractEn'])) {
             $articleMeta .= "    <trans-abstract xml:lang=\"en\">\n";
             $articleMeta .= "      <title>Abstract</title>\n";
-            $articleMeta .= "      <p>" . $e($meta['abstractEn']) . "</p>\n";
+            $articleMeta .= "      <p>" . $this->escapeXmlWithItalic($meta['abstractEn']) . "</p>\n";
             $articleMeta .= "    </trans-abstract>\n";
         }
 
@@ -823,8 +948,27 @@ class DocxParser
         $xml .= "<front>\n";
         $xml .= $journalMeta . "\n\n";
         $xml .= $articleMeta . "</front>\n";
+        $xml .= "<body>\n  <!-- contenido del cuerpo omitido -->\n</body>\n";
+        $xml .= "<back>\n  <!-- referencias y notas omitidas -->\n</back>\n";
         $xml .= "</article>\n";
 
         return $xml;
+    }
+
+    private function escapeXmlWithItalic($text)
+    {
+        $text = (string) $text;
+        $result = '';
+        $offset = 0;
+        while (preg_match('/<italic>(.*?)<\/italic>/su', $text, $matches, PREG_OFFSET_CAPTURE, $offset)) {
+            $matchText = $matches[0][0];
+            $matchPos = $matches[0][1];
+            $prefix = substr($text, $offset, $matchPos - $offset);
+            $result .= htmlspecialchars($prefix, ENT_QUOTES | ENT_XML1, 'UTF-8');
+            $result .= '<italic>' . htmlspecialchars($matches[1][0], ENT_QUOTES | ENT_XML1, 'UTF-8') . '</italic>';
+            $offset = $matchPos + strlen($matchText);
+        }
+        $result .= htmlspecialchars(substr($text, $offset), ENT_QUOTES | ENT_XML1, 'UTF-8');
+        return $result;
     }
 }

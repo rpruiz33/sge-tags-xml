@@ -491,10 +491,10 @@ function buildJatsFromMeta(meta) {
   // Author notes (conflict & contributions)
   articleMeta += `      <author-notes>\n`;
   if (meta.conflict) {
-    articleMeta += `        <fn fn-type="conflict" id="fn-conf">\n          <label>Conflicto de Intereses</label>\n          <p>${e(meta.conflict)}</p>\n        </fn>\n`;
+    articleMeta += `        <fn fn-type="conflict" id="fn2">\n          <label>Conflicto de Intereses</label>\n          <p>${e(meta.conflict)}</p>\n        </fn>\n`;
   }
   if (meta.contributions && meta.contributions.length) {
-    articleMeta += `        <fn fn-type="equal" id="fn-contrib">\n          <label>Contribución autoral</label>\n          <p>${e(meta.contributions.join(' '))}</p>\n        </fn>\n`;
+    articleMeta += `        <fn fn-type="equal" id="fn3">\n          <label>Contribución autoral</label>\n          <p>${e(meta.contributions.join(' '))}</p>\n        </fn>\n`;
   }
   articleMeta += `      </author-notes>\n`;
 
@@ -528,7 +528,7 @@ function buildJatsFromMeta(meta) {
 
   // Abstracts
   if (meta.abstractEs) {
-    articleMeta += `      <abstract xml:lang="es">\n        <title>Resumen</title>\n        <p>${e(meta.abstractEs)}</p>\n      </abstract>\n`;
+    articleMeta += `      <abstract>\n        <title>Resumen</title>\n        <p>${escapeXmlWithItalic(meta.abstractEs)}</p>\n      </abstract>\n`;
   }
   if (meta.abstractEn) {
     articleMeta += `      <trans-abstract xml:lang="en">\n        <title>Abstract</title>\n        <p>${e(meta.abstractEn)}</p>\n      </trans-abstract>\n`;
@@ -564,12 +564,6 @@ function buildJatsFromMeta(meta) {
 
   // Back matter with references and fn-group
   let back = `  <back>\n`;
-  if (meta.conflict || (meta.contributions && meta.contributions.length)) {
-    back += `    <fn-group>\n`;
-    if (meta.conflict) back += `      <fn fn-type="conflict">\n        <label>Conflicto de Intereses</label>\n        <p>${e(meta.conflict)}</p>\n      </fn>\n`;
-    if (meta.contributions && meta.contributions.length) meta.contributions.forEach((c,i)=>{ back += `      <fn fn-type="con">\n        <p>${e(c)}</p>\n      </fn>\n`; });
-    back += `    </fn-group>\n`;
-  }
   back += `    <ref-list>\n      <title>Referencias bibliográficas</title>\n      <ref id="B1">\n        <label>1</label>\n        <element-citation publication-type="journal">\n          <comment>[Completar referencias en formato JATS element-citation]</comment>\n        </element-citation>\n      </ref>\n    </ref-list>\n  </back>\n`;
 
   const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE article PUBLIC "-//NLM//DTD JATS (Z39.96) Journal Publishing DTD v1.1 20121330//EN"\n  "https://jats.nlm.nih.gov/publishing/1.1/JATS-journalpublishing1-1.dtd">\n<article dtd-version="1.1" article-type="research-article" specific-use="sps-1.9" xml:lang="${e(meta.lang||'es')}" xmlns:xlink="http://www.w3.org/1999/xlink">\n\n  <front>\n${journalMeta}\n\n${articleMeta}\n  </front>\n\n${body}\n${back}`;
@@ -584,4 +578,22 @@ function esc(s) {
   return String(s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;')
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function escapeXmlWithItalic(text) {
+  const value = String(text || '');
+  let result = '';
+  let offset = 0;
+
+  while (true) {
+    const match = value.slice(offset).match(/<italic>(.*?)<\/italic>/s);
+    if (!match) break;
+    const matchIndex = value.indexOf(match[0], offset);
+    result += esc(value.slice(offset, matchIndex));
+    result += `<italic>${esc(match[1])}</italic>`;
+    offset = matchIndex + match[0].length;
+  }
+
+  result += esc(value.slice(offset));
+  return result;
 }

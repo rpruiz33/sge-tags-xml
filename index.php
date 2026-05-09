@@ -18,7 +18,7 @@
       <div class="logo-badge">XML</div>
       <div class="logo-text">
         <span class="logo-name">XML JATS</span>
-        <span class="logo-ver">Front-only</span>
+        <span class="logo-ver">Automático</span>
       </div>
     </div>
     <div class="header-tag">
@@ -106,8 +106,8 @@
         </ul>
       </div>
       <div class="manual-row">
-        <button class="btn-action" id="loadPatternBtn">Cargar XML patrón</button>
-        <small>El front cargará el XML desde <code>pattern.xml</code>.</small>
+        <button class="btn-action" id="loadPatternBtn">Ver XML patrón</button>
+        <small>Referencia visual desde <code>pattern.xml</code>; el XML final sale de la conversión automática.</small>
       </div>
       <div class="manual-row">
         <label>DOI:</label>
