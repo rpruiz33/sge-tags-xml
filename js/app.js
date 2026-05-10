@@ -37,6 +37,12 @@ const manualMetaPanel = document.querySelector('.manual-meta-panel');
 let currentFile = null;
 let generatedXml = '';
 let generatedFilename = '';
+let manualState = {
+  affiliations: [],
+  funding: [],
+  authors: [],
+  refCount: 0,
+};
 
 async function loadPatternXml() {
   const candidates = ['pattern.xml', patternXmlField ? null : null].filter(Boolean);
@@ -294,6 +300,58 @@ function populateFormFromPattern(xmlString) {
     return el ? (el.textContent || '').trim() : '';
   };
 
+  const parseDate = node => {
+    if (!node) return '';
+    const d = node.querySelector('day')?.textContent?.trim() || '';
+    const m = node.querySelector('month')?.textContent?.trim() || '';
+    const y = node.querySelector('year')?.textContent?.trim() || '';
+    return [d, m, y].filter(Boolean).join(' ').trim();
+  };
+
+  const normalizeDash = text => String(text || '').replace(/\u2013/g, '-').trim();
+
+  const kwdEs = Array.from(doc.querySelectorAll('kwd-group[xml\\:lang="es"] kwd')).map(n => n.textContent.trim()).filter(Boolean);
+  const kwdEn = Array.from(doc.querySelectorAll('kwd-group[xml\\:lang="en"] kwd')).map(n => n.textContent.trim()).filter(Boolean);
+
+  const affNodes = Array.from(doc.querySelectorAll('article-meta aff'));
+  const parsedAffiliations = affNodes.map((affNode, idx) => {
+    const original = (affNode.querySelector('institution[content-type="original"]')?.textContent || affNode.querySelector('institution')?.textContent || '').trim();
+    const email = (affNode.querySelector('email')?.textContent || '').trim();
+    return { id: affNode.getAttribute('id') || `aff${idx + 1}`, original, email };
+  }).filter(a => a.original);
+
+  const parsedAuthors = Array.from(doc.querySelectorAll('contrib-group contrib[contrib-type="author"]')).map(c => {
+    const surname = c.querySelector('surname')?.textContent?.trim() || '';
+    const given = c.querySelector('given-names')?.textContent?.trim() || '';
+    const name = `${given} ${surname}`.trim() || (c.textContent || '').trim();
+    const orcid = (c.querySelector('contrib-id[contrib-id-type="orcid"]')?.textContent || '').trim().replace(/^https?:\/\/orcid\.org\//i, '');
+    return { name, orcid };
+  }).filter(a => a.name);
+
+  manualState = {
+    lang: (doc.documentElement?.getAttribute('xml:lang') || 'es').trim() || 'es',
+    sps: (doc.documentElement?.getAttribute('specific-use') || 'sps-1.9').trim() || 'sps-1.9',
+    journalTitle: q('journal-title'),
+    journalAbbrev: q('abbrev-journal-title[abbrev-type="publisher"]') || q('journal-id[journal-id-type="nlm-ta"]'),
+    issn_ppub: q('issn[pub-type="ppub"]'),
+    issn_epub: q('issn[pub-type="epub"]'),
+    publisher: q('publisher-name'),
+    articleTitle: q('article-title'),
+    articleTitleEn: q('trans-title-group[xml\\:lang="en"] trans-title') || q('trans-title'),
+    abstractEs: normalizeDash(q('abstract p')),
+    abstractEn: normalizeDash(q('trans-abstract[xml\\:lang="en"] p') || q('trans-abstract p')),
+    kwdsEs: kwdEs,
+    kwdsEn: kwdEn,
+    affiliations: parsedAffiliations,
+    authors: parsedAuthors,
+    received: parseDate(doc.querySelector('history date[date-type="received"]')),
+    revised: parseDate(doc.querySelector('history date[date-type="rev-recd"]')),
+    accepted: parseDate(doc.querySelector('history date[date-type="accepted"]')),
+    refCount: Number(doc.querySelector('counts ref-count')?.getAttribute('count') || 0) || 0,
+    funding: Array.from(doc.querySelectorAll('funding-group award-group funding-source')).map(n => n.textContent.trim()).filter(Boolean),
+    fundingStatement: q('funding-statement'),
+  };
+
   // DOI
   const doi = q('article-id[pub-id-type="doi"]');
   if (manualDoi) manualDoi.value = doi;
@@ -316,7 +374,7 @@ function populateFormFromPattern(xmlString) {
   if (manualEloc) manualEloc.value = eloc;
 
   // Funding: join award-group sources and funding-statement
-  const fundingSources = Array.from(doc.querySelectorAll('funding-group award-group funding-source')).map(n=>n.textContent.trim()).filter(Boolean);
+  const fundingSources = manualState.funding || [];
   const fundingStatement = q('funding-statement');
   const fundingText = fundingSources.length ? fundingSources.join('; ') : fundingStatement;
   if (manualFunding) manualFunding.value = fundingText;
@@ -334,28 +392,40 @@ function populateFormFromPattern(xmlString) {
   if (manualAffField) manualAffField.value = mainAff;
 
   // Authors: rebuild the authors list in the UI
-  const authors = Array.from(doc.querySelectorAll('contrib-group contrib[contrib-type="author"]'));
+  const authors = parsedAuthors;
   const authorsList = document.querySelector('.manual-authors');
   if (authorsList && authors.length) {
     authorsList.innerHTML = '';
-    authors.forEach((c, idx) => {
-      const surname = c.querySelector('surname')?.textContent?.trim() || '';
-      const given = c.querySelector('given-names')?.textContent?.trim() || '';
-      const orcid = c.querySelector('contrib-id[contrib-id-type="orcid"]')?.textContent?.trim() || '';
+    authors.forEach((a, idx) => {
       const sup = idx + 1;
       const li = document.createElement('li');
-      const nameText = `${given} ${surname}`.trim() || (c.textContent||'').trim();
-      if (orcid) {
-        const a = document.createElement('a');
-        a.href = orcid;
-        a.target = '_blank';
-        a.rel = 'noopener';
-        a.textContent = orcid.replace('https://orcid.org/','');
-        li.innerHTML = `${esc(nameText)}<sup>${sup}</sup> — `;
-        li.appendChild(a);
-      } else {
-        li.innerHTML = `${esc(nameText)}<sup>${sup}</sup>`;
-      }
+      const nameText = a.name;
+      const nameInput = document.createElement('input');
+      nameInput.type = 'text';
+      nameInput.className = 'author-name';
+      nameInput.name = `author_name_${sup}`;
+      nameInput.autocomplete = 'off';
+      nameInput.spellcheck = false;
+      nameInput.value = nameText;
+      nameInput.setAttribute('aria-label', `Nombre del autor ${sup}`);
+
+      const orcidInput = document.createElement('input');
+      orcidInput.type = 'text';
+      orcidInput.className = 'author-orcid';
+      orcidInput.name = `author_orcid_${sup}`;
+      orcidInput.autocomplete = 'off';
+      orcidInput.spellcheck = false;
+      orcidInput.value = (a.orcid || '').replace('https://orcid.org/','');
+      orcidInput.placeholder = '0000-0000-0000-0000';
+      orcidInput.setAttribute('aria-label', `ORCID del autor ${sup}`);
+
+      const index = document.createElement('span');
+      index.className = 'author-index';
+      index.textContent = `${sup}.`;
+
+      li.appendChild(index);
+      li.appendChild(nameInput);
+      li.appendChild(orcidInput);
       authorsList.appendChild(li);
     });
   }
@@ -363,7 +433,7 @@ function populateFormFromPattern(xmlString) {
   // Render a minimal metadata preview
   const kwdGroupsEs = Array.from(doc.querySelectorAll('kwd-group')).filter(n => (n.getAttribute('xml:lang') || '').toLowerCase() === 'es');
   const kwdsEs = kwdGroupsEs.flatMap(group => Array.from(group.querySelectorAll('kwd')).map(n => n.textContent.trim()).filter(Boolean));
-  const metaPreview = { doi, authors: authors.map(a=>({ name: ((a.querySelector('given-names')?.textContent||'') + ' ' + (a.querySelector('surname')?.textContent||'')).trim() })), kwdsEs, funding: fundingSources };
+  const metaPreview = { doi, authors: authors.map(a=>({ name: a.name })), kwdsEs, funding: fundingSources };
   renderMetadata(metaPreview);
   metaPanel.classList.remove('hidden');
 }
@@ -399,25 +469,34 @@ function populateFormFromPattern(xmlString) {
 
 // Construye el objeto meta desde el formulario manual
 function collectManualMeta() {
-  const meta = {};
+  const meta = { ...manualState };
   meta['doi'] = manualDoi.value.trim();
-  meta['received'] = '';
-  meta['revised'] = '';
-  meta['accepted'] = '';
   const day = manualPubDay.value.trim();
   const month = manualPubMonth.value.trim();
   const year = manualPubYear.value.trim();
-  if (day || month || year) meta['pubdate'] = `${day} ${month} ${year}`.trim();
+  if (day || month || year) {
+    meta['pubdate'] = `${day} ${month} ${year}`.trim();
+  }
   meta['volume'] = manualVolume.value.trim();
   meta['elocation-id'] = manualEloc.value.trim();
-  meta['funding'] = manualFunding.value ? manualFunding.value.split(';').map(s=>s.trim()).filter(Boolean) : [];
+  meta['funding'] = manualFunding.value ? manualFunding.value.split(';').map(s=>s.trim()).filter(Boolean) : (manualState.funding || []);
   meta['conflict'] = manualConflict.value.trim();
-  meta['contributions'] = manualContrib.value ? [manualContrib.value.trim()] : [];
-  meta['authors'] = collectManualAuthors();
+  meta['contributions'] = manualContrib.value ? [manualContrib.value.trim()] : (manualState.contributions || []);
+  const manualAuthors = collectManualAuthors();
+  meta['authors'] = manualAuthors.length ? manualAuthors : (manualState.authors || []);
   const aff = document.getElementById('manualAff')?.value?.trim() || '';
-  meta['affiliations'] = aff ? [aff] : [];
-  meta['articleTitle'] = document.title || 'Artículo desde metadatos manuales';
-  meta['articleTitleEn'] = '';
+  const baseAffs = Array.isArray(manualState.affiliations) ? manualState.affiliations.slice() : [];
+  if (baseAffs.length) {
+    baseAffs[0] = { ...(baseAffs[0] || {}), original: aff || baseAffs[0].original || '' };
+    meta['affiliations'] = baseAffs;
+  } else {
+    meta['affiliations'] = aff ? [{ id: 'aff1', original: aff, email: '' }] : [];
+  }
+  meta['articleTitle'] = manualState.articleTitle || document.title || 'Artículo desde metadatos manuales';
+  meta['articleTitleEn'] = manualState.articleTitleEn || '';
+  meta['abstractEs'] = String(meta['abstractEs'] || '').replace(/\u2013/g, '-');
+  meta['abstractEn'] = String(meta['abstractEn'] || '').replace(/\u2013/g, '-');
+  meta['refCount'] = Number(meta['refCount'] || 0) || 0;
   return meta;
 }
 
@@ -425,11 +504,12 @@ function collectManualAuthors() {
   const list = document.querySelectorAll('.manual-authors li');
   const authors = [];
   list.forEach(li => {
-    const a = li.querySelector('a');
-    const orcid = a ? a.getAttribute('href') || '' : '';
-    const text = (li.textContent || '').replace(/\s+—\s+.*/,'').trim();
-    const name = text.replace(/\s+\d+$/, '').trim();
-    if (name) authors.push({ name, orcid: orcid.replace('https://orcid.org/','') });
+    const nameInput = li.querySelector('.author-name');
+    const orcidInput = li.querySelector('.author-orcid');
+    const fallbackText = (li.textContent || '').trim();
+    const name = (nameInput?.value || fallbackText).trim();
+    const orcid = (orcidInput?.value || '').trim().replace(/^https?:\/\/orcid\.org\//i, '');
+    if (name) authors.push({ name, orcid });
   });
   return authors;
 }
@@ -456,6 +536,23 @@ manualInputs.forEach(input => {
     }
   });
 });
+
+const manualAuthorsList = document.querySelector('.manual-authors');
+if (manualAuthorsList) {
+  manualAuthorsList.addEventListener('input', () => {
+    if (!resultPanel || resultPanel.classList.contains('hidden')) return;
+    const meta = collectManualMeta();
+    try {
+      generatedXml = buildJatsFromMeta(meta);
+      generatedFilename = (meta.articleTitle || 'manual').replace(/[^a-z0-9]+/gi, '_').substring(0,80) + '_JATS_SPS19';
+      xmlOutput.textContent = generatedXml;
+      renderMetadata(meta);
+      metaPanel.classList.remove('hidden');
+    } catch (_) {
+      // no alert spam while typing
+    }
+  });
+}
 
 // Construye un JATS XML simple a partir del objeto meta (cliente)
 function buildJatsFromMeta(meta) {
@@ -496,7 +593,11 @@ function buildJatsFromMeta(meta) {
   // Affiliations
   (meta.affiliations||[]).forEach((aff,i)=>{
     const n=i+1;
-    articleMeta += `      <aff id="aff${n}">\n        <label>${n}</label>\n        <institution content-type="original">${e(aff)}</institution>\n      </aff>\n`;
+    const affOriginal = typeof aff === 'string' ? aff : (aff.original || '');
+    const affEmail = typeof aff === 'string' ? '' : (aff.email || '');
+    articleMeta += `      <aff id="aff${n}">\n        <label>${n}</label>\n        <institution content-type="original">${e(affOriginal)}</institution>\n`;
+    if (affEmail) articleMeta += `        <email>${e(affEmail)}</email>\n`;
+    articleMeta += `      </aff>\n`;
   });
 
   // Author notes (conflict & contributions)
@@ -527,10 +628,23 @@ function buildJatsFromMeta(meta) {
 
   // History (received/revised/accepted years if present)
   if (meta.received || meta.revised || meta.accepted) {
+    const addHistoryDate = (type, value) => {
+      if (!value) return '';
+      const parts = String(value).trim().split(/\s+/);
+      const d = parts[0] || '';
+      const m = parts[1] || '';
+      const y = parts[2] || (String(value).match(/\d{4}/)?.[0] || '');
+      let dateXml = `        <date date-type="${type}">\n`;
+      if (d) dateXml += `          <day>${e(d)}</day>\n`;
+      if (m) dateXml += `          <month>${e(m)}</month>\n`;
+      if (y) dateXml += `          <year>${e(y)}</year>\n`;
+      dateXml += `        </date>\n`;
+      return dateXml;
+    };
     articleMeta += `      <history>\n`;
-    if (meta.received) articleMeta += `        <date date-type="received"><year>${e((meta.received.match(/\d{4}/)||[''])[0])}</year></date>\n`;
-    if (meta.revised) articleMeta += `        <date date-type="rev-recd"><year>${e((meta.revised.match(/\d{4}/)||[''])[0])}</year></date>\n`;
-    if (meta.accepted) articleMeta += `        <date date-type="accepted"><year>${e((meta.accepted.match(/\d{4}/)||[''])[0])}</year></date>\n`;
+    articleMeta += addHistoryDate('received', meta.received);
+    articleMeta += addHistoryDate('rev-recd', meta.revised);
+    articleMeta += addHistoryDate('accepted', meta.accepted);
     articleMeta += `      </history>\n`;
   }
 

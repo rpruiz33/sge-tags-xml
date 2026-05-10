@@ -200,8 +200,11 @@ body {
 .manual-row label { width: 160px; font-family: var(--font-mono); font-size: 13px; color: var(--c-accent); }
 .manual-row input[type="text"], .manual-row textarea { flex: 1; min-width: 160px; background: var(--c-surface2); border: 1px solid var(--c-border); color: var(--c-text); padding: .5rem .6rem; border-radius: 8px; font-family: var(--font-mono); }
 .manual-row textarea { resize: vertical; }
-.manual-authors { list-style: none; padding-left: 0; color: var(--c-text); font-family: var(--font-mono); font-size: 13px; }
-.manual-authors li { margin-bottom: 4px; }
+.manual-authors { list-style: none; padding-left: 0; color: var(--c-text); font-family: var(--font-mono); font-size: 13px; display: flex; flex-direction: column; gap: 6px; }
+.manual-authors li { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.manual-authors .author-index { min-width: 24px; color: var(--c-accent); }
+.manual-authors .author-name { flex: 1 1 260px; min-width: 180px; background: var(--c-surface2); border: 1px solid var(--c-border); color: var(--c-text); padding: .45rem .55rem; border-radius: 8px; font-family: var(--font-mono); }
+.manual-authors .author-orcid { flex: 0 1 220px; min-width: 180px; background: var(--c-surface2); border: 1px solid var(--c-border); color: var(--c-text); padding: .45rem .55rem; border-radius: 8px; font-family: var(--font-mono); }
 .btn-action { padding: .45rem .9rem; }
 
 @media (max-width: 600px) {

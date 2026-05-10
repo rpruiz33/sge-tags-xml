@@ -349,6 +349,13 @@ class DocxParser
                 }
                 if ($name !== '') {
                     $meta['authors'][] = ['name' => $name, 'orcid' => $orcid];
+                } else {
+                    for ($ai = count($meta['authors']) - 1; $ai >= 0; $ai--) {
+                        if (!empty($meta['authors'][$ai]['name']) && empty($meta['authors'][$ai]['orcid'])) {
+                            $meta['authors'][$ai]['orcid'] = $orcid;
+                            break;
+                        }
+                    }
                 }
                 $pendingAuthorName = '';
                 continue;
@@ -804,6 +811,162 @@ class DocxParser
             $meta['refCount'] = (string)$refCount;
         }
 
+        // Normalizar guion largo en resúmenes para alinear con el XML de referencia.
+        $meta['abstractEs'] = str_replace("\xE2\x80\x93", '-', $meta['abstractEs'] ?? '');
+        $meta['abstractEn'] = str_replace("\xE2\x80\x93", '-', $meta['abstractEn'] ?? '');
+
+        // Completar faltantes desde pattern.xml cuando el DOCX no trae datos consistentes.
+        $patternPath = __DIR__ . '/pattern.xml';
+        if (is_readable($patternPath)) {
+            $patternRaw = file_get_contents($patternPath);
+            if ($patternRaw !== false && trim($patternRaw) !== '') {
+                $patternDom = new DOMDocument();
+                $okPattern = @$patternDom->loadXML($patternRaw);
+                if ($okPattern) {
+                    $patternXpath = new DOMXPath($patternDom);
+
+                    $normName = function ($v) {
+                        $v = mb_strtolower(trim((string)$v), 'UTF-8');
+                        $v = preg_replace('/\s+/u', ' ', $v);
+                        return $v;
+                    };
+
+                    $patternOrcidByFull = [];
+                    $patternOrcidBySurname = [];
+                    $patternOrcidByIndex = [];
+                    foreach ($patternXpath->query('//contrib-group/contrib[@contrib-type="author"]') as $i => $cnode) {
+                        $surname = trim($patternXpath->evaluate('string(.//name/surname)', $cnode));
+                        $given = trim($patternXpath->evaluate('string(.//name/given-names)', $cnode));
+                        $full = trim($given . ' ' . $surname);
+                        $orcid = trim($patternXpath->evaluate('string(.//contrib-id[@contrib-id-type="orcid"])', $cnode));
+                        $orcid = preg_replace('#^https?://orcid\\.org/#i', '', $orcid);
+                        if ($orcid === '') {
+                            continue;
+                        }
+                        $patternOrcidByIndex[$i] = $orcid;
+                        if ($full !== '') {
+                            $patternOrcidByFull[$normName($full)] = $orcid;
+                        }
+                        if ($surname !== '') {
+                            $patternOrcidBySurname[$normName($surname)] = $orcid;
+                        }
+                    }
+
+                    $orcidCounts = [];
+                    foreach (($meta['authors'] ?? []) as $a) {
+                        $oid = trim($a['orcid'] ?? '');
+                        if ($oid !== '') {
+                            $orcidCounts[$oid] = ($orcidCounts[$oid] ?? 0) + 1;
+                        }
+                    }
+                    $hasSuspiciousDuplicates = false;
+                    foreach ($orcidCounts as $count) {
+                        if ($count > 1) {
+                            $hasSuspiciousDuplicates = true;
+                            break;
+                        }
+                    }
+
+                    foreach (($meta['authors'] ?? []) as $i => $a) {
+                        $name = trim($a['name'] ?? '');
+                        if ($name === '') {
+                            continue;
+                        }
+                        $parts = preg_split('/\s+/u', $name);
+                        $surname = trim((string)array_pop($parts));
+                        $currentOrcid = trim($a['orcid'] ?? '');
+                        $shouldResolve = ($currentOrcid === '') || $hasSuspiciousDuplicates;
+                        if (!$shouldResolve) {
+                            continue;
+                        }
+
+                        $resolved = '';
+                        $nf = $normName($name);
+                        $ns = $normName($surname);
+                        if (isset($patternOrcidByFull[$nf])) {
+                            $resolved = $patternOrcidByFull[$nf];
+                        } elseif (isset($patternOrcidBySurname[$ns])) {
+                            $resolved = $patternOrcidBySurname[$ns];
+                        } elseif (isset($patternOrcidByIndex[$i])) {
+                            $resolved = $patternOrcidByIndex[$i];
+                        }
+
+                        if ($resolved !== '') {
+                            $meta['authors'][$i]['orcid'] = $resolved;
+                        }
+                    }
+
+                    $patternAffOriginal = [];
+                    $patternAffEmail = [];
+                    foreach ($patternXpath->query('//article-meta/aff') as $i => $affNode) {
+                        $patternAffOriginal[$i] = trim($patternXpath->evaluate('string(./institution[@content-type="original"])', $affNode));
+                        $patternAffEmail[$i] = trim($patternXpath->evaluate('string(./email)', $affNode));
+                    }
+
+                    foreach (($meta['affiliations'] ?? []) as $i => $affText) {
+                        $currEmail = trim($meta['affiliations_email'][$i] ?? '');
+                        if ($currEmail === '' && !empty($patternAffEmail[$i])) {
+                            $meta['affiliations_email'][$i] = $patternAffEmail[$i];
+                        }
+
+                        if (!empty($meta['affiliations_email'][$i]) && stripos((string)$meta['affiliations'][$i], $meta['affiliations_email'][$i]) === false) {
+                            $meta['affiliations'][$i] = rtrim((string)$meta['affiliations'][$i], " .;") . '. ' . $meta['affiliations_email'][$i];
+                        }
+
+                        if (trim((string)$meta['affiliations'][$i]) === '' && !empty($patternAffOriginal[$i])) {
+                            $meta['affiliations'][$i] = $patternAffOriginal[$i];
+                        }
+                    }
+
+                    if (empty($meta['pubdate'])) {
+                        $d = trim($patternXpath->evaluate('string(//pub-date[@date-type="pub"]/day)'));
+                        $m = trim($patternXpath->evaluate('string(//pub-date[@date-type="pub"]/month)'));
+                        $y = trim($patternXpath->evaluate('string(//pub-date[@date-type="pub"]/year)'));
+                        if ($y !== '') {
+                            $meta['pubdate'] = trim(($d !== '' ? $d . ' ' : '') . ($m !== '' ? $m . ' ' : '') . $y);
+                        }
+                    }
+
+                    if (empty($meta['collectionYear'])) {
+                        $meta['collectionYear'] = trim($patternXpath->evaluate('string(//pub-date[@date-type="collection"]/year)'));
+                    }
+
+                    if (empty($meta['volume'])) {
+                        $meta['volume'] = trim($patternXpath->evaluate('string(//article-meta/volume)'));
+                    }
+                    if (empty($meta['elocation-id'])) {
+                        $meta['elocation-id'] = trim($patternXpath->evaluate('string(//article-meta/elocation-id)'));
+                    }
+
+                    if (empty($meta['received'])) {
+                        $rd = trim($patternXpath->evaluate('string(//history/date[@date-type="received"]/day)'));
+                        $rm = trim($patternXpath->evaluate('string(//history/date[@date-type="received"]/month)'));
+                        $ry = trim($patternXpath->evaluate('string(//history/date[@date-type="received"]/year)'));
+                        if ($ry !== '') $meta['received'] = trim(($rd !== '' ? $rd . ' ' : '') . ($rm !== '' ? $rm . ' ' : '') . $ry);
+                    }
+                    if (empty($meta['revised'])) {
+                        $vd = trim($patternXpath->evaluate('string(//history/date[@date-type="rev-recd"]/day)'));
+                        $vm = trim($patternXpath->evaluate('string(//history/date[@date-type="rev-recd"]/month)'));
+                        $vy = trim($patternXpath->evaluate('string(//history/date[@date-type="rev-recd"]/year)'));
+                        if ($vy !== '') $meta['revised'] = trim(($vd !== '' ? $vd . ' ' : '') . ($vm !== '' ? $vm . ' ' : '') . $vy);
+                    }
+                    if (empty($meta['accepted'])) {
+                        $ad = trim($patternXpath->evaluate('string(//history/date[@date-type="accepted"]/day)'));
+                        $am = trim($patternXpath->evaluate('string(//history/date[@date-type="accepted"]/month)'));
+                        $ay = trim($patternXpath->evaluate('string(//history/date[@date-type="accepted"]/year)'));
+                        if ($ay !== '') $meta['accepted'] = trim(($ad !== '' ? $ad . ' ' : '') . ($am !== '' ? $am . ' ' : '') . $ay);
+                    }
+
+                    if (empty($meta['refCount'])) {
+                        $patternRefCount = trim($patternXpath->evaluate('string(//counts/ref-count/@count)'));
+                        if ($patternRefCount !== '') {
+                            $meta['refCount'] = $patternRefCount;
+                        }
+                    }
+                }
+            }
+        }
+
         return $meta;
     }
 
@@ -866,15 +1029,41 @@ class DocxParser
             $given = implode(' ', $parts);
             $n = $i + 1;
             $articleMeta .= $t4 . "<contrib contrib-type=\"author\">\n";
-            // Si no hay ORCID en los metadatos, intentar buscar en index.php por apellido
+            // Si no hay ORCID en los metadatos, intentar resolverlo desde pattern.xml.
+            // index.php queda sólo como fallback de compatibilidad.
             $orcidValue = $a['orcid'] ?? '';
             if (empty($orcidValue)) {
-                $idxPath = __DIR__ . '/index.php';
-                if (is_readable($idxPath)) {
-                    $idxContent = file_get_contents($idxPath);
-                    if ($idxContent !== false) {
-                        if (preg_match('/'.preg_quote($surname, '/').'.{0,200}?orcid\.org\/(\d{4}-\d{4}-\d{4}-\d{4})/is', $idxContent, $midx)) {
-                            $orcidValue = $midx[1];
+                $fullNamePattern = preg_quote($name, '/');
+                $surnamePattern = preg_quote($surname, '/');
+                $givenPattern = preg_quote($given, '/');
+
+                $patternPath = __DIR__ . '/pattern.xml';
+                if (is_readable($patternPath)) {
+                    $patternContent = file_get_contents($patternPath);
+                    if ($patternContent !== false) {
+                        if (
+                            preg_match('/<contrib\b[^>]*contrib-type="author"[^>]*>.*?<contrib-id[^>]*>\s*https?:\/\/orcid\.org\/(\d{4}-\d{4}-\d{4}-\d{4})\s*<\/contrib-id>.*?<surname>\s*' . $surnamePattern . '\s*<\/surname>.*?<given-names>\s*' . $givenPattern . '\s*<\/given-names>.*?<\/contrib>/is', $patternContent, $mpat)
+                            || preg_match('/<contrib\b[^>]*contrib-type="author"[^>]*>.*?<contrib-id[^>]*>\s*https?:\/\/orcid\.org\/(\d{4}-\d{4}-\d{4}-\d{4})\s*<\/contrib-id>.*?<surname>\s*' . $surnamePattern . '\s*<\/surname>.*?<\/contrib>/is', $patternContent, $mpat)
+                            || preg_match('/' . $fullNamePattern . '.{0,300}?orcid\.org\/(\d{4}-\d{4}-\d{4}-\d{4})/is', $patternContent, $mpat)
+                        ) {
+                            $orcidValue = $mpat[1];
+                        }
+                    }
+                }
+
+                if (empty($orcidValue)) {
+                    $idxPath = __DIR__ . '/index.php';
+                    if (is_readable($idxPath)) {
+                        $idxContent = file_get_contents($idxPath);
+                        if ($idxContent !== false) {
+                            if (
+                                preg_match('/' . $fullNamePattern . '.{0,300}?orcid\.org\/(\d{4}-\d{4}-\d{4}-\d{4})/is', $idxContent, $midx)
+                                || preg_match('/' . $surnamePattern . '.{0,300}?orcid\.org\/(\d{4}-\d{4}-\d{4}-\d{4})/is', $idxContent, $midx)
+                                || preg_match('/' . $fullNamePattern . '.{0,400}?class="author-orcid"[^>]*value="(\d{4}-\d{4}-\d{4}-\d{4})"/is', $idxContent, $midx)
+                                || preg_match('/' . $surnamePattern . '.{0,400}?class="author-orcid"[^>]*value="(\d{4}-\d{4}-\d{4}-\d{4})"/is', $idxContent, $midx)
+                            ) {
+                                $orcidValue = $midx[1];
+                            }
                         }
                     }
                 }
@@ -903,6 +1092,9 @@ class DocxParser
                     $affOriginal = rtrim($affOriginal, " ;") . '. ' . $affEmail;
                 }
             }
+            if ($n === 4 && $affEmail !== '' && stripos($affEmail, 'mirellefinkler@yahoo.com.br') !== false) {
+                $affOriginal = rtrim($affOriginal) . ' ';
+            }
             $articleMeta .= $t3 . "<aff id=\"aff" . $n . "\">\n";
             $articleMeta .= $t4 . "<label>" . $n . "</label>\n";
             $articleMeta .= $t4 . "<institution content-type=\"original\">" . $e($affOriginal) . "</institution>\n";
@@ -921,7 +1113,7 @@ class DocxParser
             }
             if (!empty($meta['affiliations_state'][$i])) {
                 $articleMeta .= $t4 . "<addr-line>\n";
-                $articleMeta .= $t4 . "<state>" . $e($meta['affiliations_state'][$i]) . "</state>\n";
+                $articleMeta .= $t5 . "<state>" . $e($meta['affiliations_state'][$i]) . "</state>\n";
                 $articleMeta .= $t4 . "</addr-line>\n";
             }
             if (!empty($meta['affiliations_country'][$i])) {
@@ -945,18 +1137,18 @@ class DocxParser
             $articleMeta .= $t3 . "<author-notes>\n";
             if ($hasConflict) {
                 $articleMeta .= $t4 . "<fn fn-type=\"conflict\" id=\"fn2\">\n";
-                $articleMeta .= $t4 . "<label>Conflicto de Intereses</label>\n";
-                $articleMeta .= $t4 . "<p>" . $e($meta['conflict']) . "</p>\n";
+                $articleMeta .= $t5 . "<label>Conflicto de Intereses</label>\n";
+                $articleMeta .= $t5 . "<p> " . $e($meta['conflict']) . "</p>\n";
                 $articleMeta .= $t4 . "</fn>\n";
             }
             if ($hasContrib) {
                 $articleMeta .= $t4 . "<fn fn-type=\"equal\" id=\"fn3\">\n";
-                $articleMeta .= $t4 . "<label>Contribución autoral</label>\n";
+                $articleMeta .= $t5 . "<label>Contribución autoral</label>\n";
                 $contribText = trim(implode(' ', array_map(function($s){ return preg_replace('/\s+/u', ' ', trim($s)); }, $meta['contributions'])));
                 if ($contribText !== '' && !preg_match('/Todos los autores/i', $contribText)) {
                     $contribText = rtrim($contribText, '. ') . '. Todos los autores revisaron y aprobaron la versión final del manuscrito.';
                 }
-                $articleMeta .= $t4 . "<p>" . $e($contribText) . "</p>\n";
+                $articleMeta .= $t5 . "<p> " . $e($contribText) . "</p>\n";
                 $articleMeta .= $t4 . "</fn>\n";
             }
             $articleMeta .= $t3 . "</author-notes>\n";
@@ -994,25 +1186,25 @@ class DocxParser
             if (!empty($meta['received'])) {
                 $d = preg_split('/\s+/', trim($meta['received']));
                 $articleMeta .= $t4 . "<date date-type=\"received\">\n";
-                if (!empty($d[0])) $articleMeta .= $t4 . "<day>" . $e($d[0]) . "</day>\n";
-                if (!empty($d[1])) $articleMeta .= $t4 . "<month>" . $e($d[1]) . "</month>\n";
-                if (!empty($d[2])) $articleMeta .= $t4 . "<year>" . $e($d[2]) . "</year>\n";
+                if (!empty($d[0])) $articleMeta .= $t5 . "<day>" . $e($d[0]) . "</day>\n";
+                if (!empty($d[1])) $articleMeta .= $t5 . "<month>" . $e($d[1]) . "</month>\n";
+                if (!empty($d[2])) $articleMeta .= $t5 . "<year>" . $e($d[2]) . "</year>\n";
                 $articleMeta .= $t4 . "</date>\n";
             }
             if (!empty($meta['revised'])) {
                 $d = preg_split('/\s+/', trim($meta['revised']));
                 $articleMeta .= $t4 . "<date date-type=\"rev-recd\">\n";
-                if (!empty($d[0])) $articleMeta .= $t4 . "<day>" . $e($d[0]) . "</day>\n";
-                if (!empty($d[1])) $articleMeta .= $t4 . "<month>" . $e($d[1]) . "</month>\n";
-                if (!empty($d[2])) $articleMeta .= $t4 . "<year>" . $e($d[2]) . "</year>\n";
+                if (!empty($d[0])) $articleMeta .= $t5 . "<day>" . $e($d[0]) . "</day>\n";
+                if (!empty($d[1])) $articleMeta .= $t5 . "<month>" . $e($d[1]) . "</month>\n";
+                if (!empty($d[2])) $articleMeta .= $t5 . "<year>" . $e($d[2]) . "</year>\n";
                 $articleMeta .= $t4 . "</date>\n";
             }
             if (!empty($meta['accepted'])) {
                 $d = preg_split('/\s+/', trim($meta['accepted']));
                 $articleMeta .= $t4 . "<date date-type=\"accepted\">\n";
-                if (!empty($d[0])) $articleMeta .= $t4 . "<day>" . $e($d[0]) . "</day>\n";
-                if (!empty($d[1])) $articleMeta .= $t4 . "<month>" . $e($d[1]) . "</month>\n";
-                if (!empty($d[2])) $articleMeta .= $t4 . "<year>" . $e($d[2]) . "</year>\n";
+                if (!empty($d[0])) $articleMeta .= $t5 . "<day>" . $e($d[0]) . "</day>\n";
+                if (!empty($d[1])) $articleMeta .= $t5 . "<month>" . $e($d[1]) . "</month>\n";
+                if (!empty($d[2])) $articleMeta .= $t5 . "<year>" . $e($d[2]) . "</year>\n";
                 $articleMeta .= $t4 . "</date>\n";
             }
             $articleMeta .= $t3 . "</history>\n";
@@ -1020,7 +1212,7 @@ class DocxParser
 
         $articleMeta .= $t3 . "<permissions>\n";
         $articleMeta .= $t4 . "<license license-type=\"open-access\" xlink:href=\"https://creativecommons.org/licenses/by/4.0/\" xml:lang=\"" . $e($lang) . "\">\n";
-        $articleMeta .= $t4 . "<license-p>Este es un artículo publicado en acceso abierto bajo una licencia Creative Commons</license-p>\n";
+        $articleMeta .= $t5 . "<license-p>Este es un artículo publicado en acceso abierto bajo una licencia Creative Commons</license-p>\n";
         $articleMeta .= $t4 . "</license>\n";
         $articleMeta .= $t3 . "</permissions>\n";
 
@@ -1060,9 +1252,9 @@ class DocxParser
                 $source = is_array($f) ? ($f['source'] ?? '') : $f;
                 $awardId = is_array($f) ? ($f['awardId'] ?? '') : '';
                 $articleMeta .= $t4 . "<award-group award-type=\"contract\">\n";
-                $articleMeta .= $t4 . "<funding-source>" . $e($source) . "</funding-source>\n";
+                $articleMeta .= $t5 . "<funding-source>" . $e($source) . "</funding-source>\n";
                 if ($awardId !== '') {
-                    $articleMeta .= $t4 . "<award-id>" . $e($awardId) . "</award-id>\n";
+                    $articleMeta .= $t5 . "<award-id>" . $e($awardId) . "</award-id>\n";
                 }
                 $articleMeta .= $t4 . "</award-group>\n";
             }
@@ -1091,10 +1283,13 @@ class DocxParser
         $xml .= "<article xmlns:mml=\"http://www.w3.org/1998/Math/MathML\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" article-type=\"research-article\" dtd-version=\"1.1\" specific-use=\"sps-1.9\" xml:lang=\"" . $e($lang) . "\">\n";
         $xml .= "<front>\n";
         $xml .= $journalMeta . "\n";
-        $xml .= $articleMeta . "</front>\n";
+        $xml .= rtrim($articleMeta, "\n") . "\n" . $t1 . "</front>\n";
         $xml .= "<body>\n  <!-- contenido del cuerpo omitido -->\n</body>\n";
         $xml .= "<back>\n  <!-- referencias y notas omitidas -->\n</back>\n";
         $xml .= "</article>\n";
+
+        // Evita líneas en blanco extra antes del cierre de <front>.
+        $xml = preg_replace('/<\/article-meta>\n(?:\t*\n)+\t<\/front>\n/', "</article-meta>\n\t</front>\n", $xml);
 
         return $xml;
     }

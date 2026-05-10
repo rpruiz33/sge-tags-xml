@@ -99,10 +99,10 @@
       <div class="manual-row">
         <label>Autores (predefinidos):</label>
         <ul class="manual-authors">
-          <li>Melisse Eich<sup>1</sup> — <a href="https://orcid.org/0000-0001-8382-1354" target="_blank" rel="noopener">0000-0001-8382-1354</a></li>
-          <li>Marta Verdi<sup>2</sup> — <a href="https://orcid.org/0000-0001-7090-9541" target="_blank" rel="noopener">0000-0001-7090-9541</a></li>
-          <li>Pedro Paulo Scremin Martins<sup>3</sup> — <a href="https://orcid.org/0000-0003-2641-8563" target="_blank" rel="noopener">0000-0003-2641-8563</a></li>
-          <li>Mirelle Finkler<sup>4</sup> — <a href="https://orcid.org/0000-0001-5764-9183" target="_blank" rel="noopener">0000-0001-5764-9183</a></li>
+          <li><span class="author-index">1.</span><input type="text" class="author-name" name="author_name_1" autocomplete="off" spellcheck="false" value="Melisse Eich" aria-label="Nombre del autor 1" /><input type="text" class="author-orcid" name="author_orcid_1" autocomplete="off" spellcheck="false" value="0000-0001-8382-1354" aria-label="ORCID del autor 1" placeholder="0000-0000-0000-0000" /></li>
+          <li><span class="author-index">2.</span><input type="text" class="author-name" name="author_name_2" autocomplete="off" spellcheck="false" value="Marta Verdi" aria-label="Nombre del autor 2" /><input type="text" class="author-orcid" name="author_orcid_2" autocomplete="off" spellcheck="false" value="0000-0001-7090-9541" aria-label="ORCID del autor 2" placeholder="0000-0000-0000-0000" /></li>
+          <li><span class="author-index">3.</span><input type="text" class="author-name" name="author_name_3" autocomplete="off" spellcheck="false" value="Pedro Paulo Scremin Martins" aria-label="Nombre del autor 3" /><input type="text" class="author-orcid" name="author_orcid_3" autocomplete="off" spellcheck="false" value="0000-0003-2641-8563" aria-label="ORCID del autor 3" placeholder="0000-0000-0000-0000" /></li>
+          <li><span class="author-index">4.</span><input type="text" class="author-name" name="author_name_4" autocomplete="off" spellcheck="false" value="Mirelle Finkler" aria-label="Nombre del autor 4" /><input type="text" class="author-orcid" name="author_orcid_4" autocomplete="off" spellcheck="false" value="0000-0001-5764-9183" aria-label="ORCID del autor 4" placeholder="0000-0000-0000-0000" /></li>
         </ul>
       </div>
       <div class="manual-row">
