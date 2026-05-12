@@ -23,13 +23,15 @@ class DocxParser
         // Esta función abre el archivo DOCX como ZIP, lee el XML interno y extrae
         // cada párrafo de texto para devolverlo como una lista de líneas.
 
-        if (!is_file($this->filePath)) {
-            return [];
+        if (!is_readable($this->filePath)) {
+            throw new RuntimeException("El archivo no existe o no se puede leer: " . $this->filePath);
         }
 
         $zip = new ZipArchive();
-        if ($zip->open($this->filePath) !== true) {
-            return [];
+        $status = $zip->open($this->filePath);
+        
+        if ($status !== true) {
+            throw new RuntimeException("No se pudo abrir el archivo DOCX (Código de error: $status)");
         }
 
         // El contenido principal del documento Word está en word/document.xml
