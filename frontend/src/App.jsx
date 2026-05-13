@@ -142,7 +142,13 @@ function App() {
         body: form
       });
 
-      const data = await response.json();
+      const raw = await response.text();
+      let data;
+      try {
+        data = JSON.parse(raw);
+      } catch {
+        throw new Error('Respuesta invalida del servidor. Verifica el endpoint /backend/convert.php');
+      }
       if (!response.ok || !data.success) {
         throw new Error(data.error || 'No se pudo convertir el archivo');
       }
@@ -229,7 +235,7 @@ function App() {
     setAlert({ type: 'info', message: '', visible: false });
 
     try {
-      const response = await fetch('/backend/generate_xml_pdf.php', {
+      const response = await fetch('/backend/pdf.php', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -238,7 +244,13 @@ function App() {
         })
       });
 
-      const result = await response.json();
+      const raw = await response.text();
+      let result;
+      try {
+        result = JSON.parse(raw);
+      } catch {
+        throw new Error('Respuesta invalida del servidor al generar PDF');
+      }
       if (!response.ok || !result.success) {
         throw new Error(result.error || 'No se pudo generar el PDF');
       }
