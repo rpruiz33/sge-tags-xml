@@ -2,51 +2,61 @@
 // Este script es el endpoint que recibe el archivo .docx del cliente
 // y devuelve el XML JATS generado en formato JSON.
 
-// Fijamos que la respuesta siempre sea JSON UTF-8.
+// Le indica al navegador o al frontend que la respuesta será JSON codificado en UTF-8.
 header('Content-Type: application/json; charset=utf-8');
 
-// Activamos el reporte completo de errores, pero no los mostramos en pantalla.
+// Activa el reporte de todos los errores para que PHP los registre internamente.
 error_reporting(E_ALL);
+// Evita mostrar errores crudos en la respuesta JSON; así el cliente recibe mensajes controlados.
 ini_set('display_errors', '0');
 
-// Cargamos la clase que convierte DOCX a XML JATS.
+// Carga la clase DocxParser, que contiene la lógica para leer DOCX, extraer metadatos y armar XML JATS.
 require_once __DIR__ . '/DocxParser.php';
 
+// Agrupa todo el proceso de conversión para poder capturar cualquier error y responderlo como JSON.
 try {
-    // Validamos que exista el archivo subido y que no haya errores de upload.
+    // Si no llegó el campo "file" o PHP marcó un error de subida, se corta el proceso.
     if (!isset($_FILES['file']) || $_FILES['file']['error'] !== UPLOAD_ERR_OK) {
+        // Lanza un error controlado que será capturado por el catch de abajo.
         throw new RuntimeException('No se pudo subir el archivo');
     }
 
-    // Obtenemos la ruta temporal del archivo subido en el servidor.
+    // Guarda la ruta temporal donde PHP dejó el DOCX subido.
     $tmp = $_FILES['file']['tmp_name'];
-    // Obtenemos el nombre original del archivo para usarlo luego en la respuesta.
+    // Guarda el nombre original del archivo; si no viene, usa "documento" como respaldo.
     $name = $_FILES['file']['name'] ?? 'documento';
 
-    // Creamos el parser con el archivo temporal.
+    // Crea el parser apuntando al archivo temporal que se acaba de subir.
     $parser = new DocxParser($tmp);
 
-    // Extraemos las líneas de texto del DOCX.
+    // Abre el DOCX, lee word/document.xml y devuelve sus párrafos como líneas de texto.
     $lines = $parser->extractLines();
 
-    // Interpretamos las líneas y construimos los metadatos.
+    // Analiza esas líneas para detectar DOI, títulos, autores, afiliaciones, fechas y otros metadatos.
     $meta = $parser->parseMetadata($lines);
 
-    // Generamos el XML JATS a partir de los metadatos.
+    // Construye el XML JATS usando los metadatos detectados.
     $xml = $parser->buildJatsXml($meta);
 
-    // Respondemos con JSON que incluye el XML, los metadatos y el nombre del archivo.
+    // Envía una respuesta exitosa al frontend con el XML generado, los metadatos y el nombre base del archivo.
     echo json_encode([
+        // Marca que la conversión terminó correctamente.
         'success' => true,
+        // Incluye el XML JATS completo generado por DocxParser.
         'xml' => $xml,
+        // Incluye los metadatos detectados para que el frontend pueda mostrarlos o depurarlos.
         'metadata' => $meta,
+        // Devuelve el nombre del archivo sin extensión para sugerir un nombre de descarga.
         'filename' => pathinfo($name, PATHINFO_FILENAME)
     ]);
 } catch (Throwable $e) {
-    // Si ocurre cualquier error, devolvemos un código 400 y mensaje en JSON.
+    // Si algo falla en la subida, parseo o generación, responde como error de solicitud.
     http_response_code(400);
+    // Devuelve un JSON de error para que el frontend pueda mostrar el mensaje sin romper la interfaz.
     echo json_encode([
+        // Marca que la conversión no se pudo completar.
         'success' => false,
+        // Incluye el mensaje de la excepción capturada.
         'error' => $e->getMessage()
     ]);
 }

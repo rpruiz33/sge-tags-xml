@@ -4,7 +4,7 @@ Aplicación web PHP para convertir artículos académicos en formato Word (.docx
 a XML JATS según el estándar SciELO Publishing Schema (SPS) 1.9.
 
 La fuente autoritativa del XML es la conversión automática del DOCX mediante `convert.php` + `DocxParser.php`.
-El front con `pattern.xml` queda como referencia visual y apoyo manual, no como origen final.
+El parser detecta los metadatos directamente desde el DOCX; no depende de ningún XML de respaldo.
 
 ---
 

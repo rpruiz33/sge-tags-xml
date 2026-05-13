@@ -106,10 +106,6 @@
         </ul>
       </div>
       <div class="manual-row">
-        <button class="btn-action" id="loadPatternBtn">Ver XML patrón</button>
-        <small>Referencia visual desde <code>pattern.xml</code>; el XML final sale de la conversión automática.</small>
-      </div>
-      <div class="manual-row">
         <label>DOI:</label>
         <input type="text" id="manualDoi" placeholder="10.18294/sc.2026.5939" />
       </div>
@@ -140,7 +136,6 @@
       <div class="manual-row">
         <button class="btn-action btn-accent" id="generateManualBtn">Generar XML desde metadatos</button>
       </div>
-      <textarea id="patternXml" hidden data-src="pattern.xml"></textarea>
       <div class="manual-row">
         <small>Estos metadatos son sólo para completar el front-end; la extracción automática sigue disponible.</small>
       </div>
