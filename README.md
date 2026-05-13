@@ -19,7 +19,7 @@ sge-tags-xml/
 	├── index.php           # Estado simple del backend
 	├── convert.php         # Endpoint DOCX -> XML JATS
 	├── DocxParser.php      # Parser y generación JATS
-	└── debug.php           # Herramientas de depuración
+
 ```
 
 ## Punto de entrada
@@ -61,4 +61,4 @@ npm run preview
 
 ## Nota
 
-El flujo actual está centrado en generación de XML JATS. No incluye exportación a PDF.
+El flujo actual está centrado en generación de XML JATS.
