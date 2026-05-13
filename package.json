@@ -1,0 +1,11 @@
+{
+  "name": "sge-tags-xml-root",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "npm --prefix front run dev",
+    "build": "npm --prefix front run build",
+    "preview": "npm --prefix front run preview"
+  }
+}
+
