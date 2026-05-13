@@ -133,7 +133,7 @@ async function convert() {
     const form = new FormData();
     form.append('file', currentFile);
 
-    const resp = await fetch('convert.php', {
+    const resp = await fetch('backend/convert.php', {
       method: 'POST',
       body: form
     });
