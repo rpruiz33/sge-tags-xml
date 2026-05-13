@@ -661,9 +661,15 @@ function App() {
             </div>
             <div className="manual-row">
               <button className="btn-action btn-accent" type="button" onClick={handleManualGenerate}>Generar XML desde metadatos</button>
-            </div>
-            <div className="manual-row">
-              <small>Estos metadatos son sólo para completar el front-end; la extracción automática sigue disponible.</small>
+              <button
+                className="btn-action"
+                type="button"
+                onClick={handleDownload}
+                disabled={!generatedXml}
+                title={generatedXml ? 'Descargar el XML ya generado' : 'Primero generá el XML para poder descargarlo'}
+              >
+                Descargar XML
+              </button>
             </div>
           </div>
         </section>
