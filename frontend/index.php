@@ -34,13 +34,13 @@ if (!$isDev) {
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,400&family=Syne:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <?php foreach (array_unique($cssFiles) as $css): ?>
-    <link rel="stylesheet" href="/front/dist/<?php echo htmlspecialchars($css); ?>">
+    <link rel="stylesheet" href="/frontend/dist/<?php echo htmlspecialchars($css); ?>">
     <?php endforeach; ?>
 </head>
 <body>
     <div id="root"></div>
     <?php foreach (array_unique($jsFiles) as $js): ?>
-    <script type="module" src="/front/dist/<?php echo htmlspecialchars($js); ?>"></script>
+    <script type="module" src="/frontend/dist/<?php echo htmlspecialchars($js); ?>"></script>
     <?php endforeach; ?>
 </body>
 </html>
