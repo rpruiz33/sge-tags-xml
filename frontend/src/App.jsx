@@ -5,6 +5,9 @@ const createEmptyManual = () => ({
   affiliations: [{ id: 'aff1', original: '', email: '' }],
   funding: [],
   authors: [{ name: '', orcid: '' }],
+  issn_ppub: '',
+  issn_epub: '',
+  sps: '1.9',
   doi: '',
   pubDay: '',
   pubMonth: '',
@@ -26,6 +29,9 @@ const createEmptyManual = () => ({
   abstractEn: '',
   kwdsEs: [],
   kwdsEn: [],
+  kwdsEsText: '',
+  kwdsEnText: '',
+  sectionsText: '',
   received: '',
   revised: '',
   accepted: ''
@@ -73,6 +79,9 @@ function buildManualFromMetadata(metadata) {
 
   return {
     ...base,
+    issn_ppub: String(metadata.issn_ppub || '').trim(),
+    issn_epub: String(metadata.issn_epub || '').trim(),
+    sps: String(metadata.sps || '1.9').trim() || '1.9',
     doi: String(metadata.doi || '').trim(),
     pubDay: pub.pubDay,
     pubMonth: pub.pubMonth,
@@ -96,6 +105,9 @@ function buildManualFromMetadata(metadata) {
     abstractEn: String(metadata.abstractEn || '').trim(),
     kwdsEs: Array.isArray(metadata.kwdsEs) ? metadata.kwdsEs : [],
     kwdsEn: Array.isArray(metadata.kwdsEn) ? metadata.kwdsEn : [],
+    kwdsEsText: Array.isArray(metadata.kwdsEs) ? metadata.kwdsEs.join('; ') : '',
+    kwdsEnText: Array.isArray(metadata.kwdsEn) ? metadata.kwdsEn.join('; ') : '',
+    sectionsText: Array.isArray(metadata.sections) ? metadata.sections.join(' | ') : '',
     received: String(metadata.received || '').trim(),
     revised: String(metadata.revised || '').trim(),
     accepted: String(metadata.accepted || '').trim(),
@@ -139,6 +151,9 @@ function App() {
       { k: 'Revista', v: metadata.journalTitle },
       { k: 'Publisher', v: metadata.publisher },
       { k: 'Autores', v: metadata.authors?.map(author => author.name).join(' · ') },
+      { k: 'ORCID', v: metadata.authors?.map(author => author.orcid).filter(Boolean).join(' · ') },
+      { k: 'Título', v: metadata.articleTitle },
+      { k: 'Título (en)', v: metadata.articleTitleEn },
       { k: 'Recibido', v: metadata.received },
       { k: 'Versión final', v: metadata.revised },
       { k: 'Aprobado', v: metadata.accepted },
@@ -394,6 +409,32 @@ function App() {
     });
   };
 
+  const handleManualAffiliationChange = (index, key, value) => {
+    setManual(current => ({
+      ...current,
+      affiliations: (current.affiliations || []).map((affiliation, affIndex) => (
+        affIndex === index ? { ...affiliation, [key]: value } : affiliation
+      ))
+    }));
+  };
+
+  const handleAddManualAffiliation = () => {
+    setManual(current => ({
+      ...current,
+      affiliations: [...(current.affiliations || []), { id: `aff${(current.affiliations || []).length + 1}`, original: '', email: '' }]
+    }));
+  };
+
+  const handleRemoveManualAffiliation = indexToRemove => {
+    setManual(current => {
+      const filtered = (current.affiliations || []).filter((_, index) => index !== indexToRemove);
+      return {
+        ...current,
+        affiliations: filtered.length ? filtered : [{ id: 'aff1', original: '', email: '' }]
+      };
+    });
+  };
+
   const fileInputId = 'fileInput';
 
   return (
@@ -514,12 +555,41 @@ function App() {
           </h2>
           <div className="manual-grid">
             <div className="manual-row">
-              <label>Afiliación principal:</label>
-              <input
-                type="text"
-                value={manual.affiliations[0]?.original || ''}
-                onChange={event => handleManualFieldChange('affiliations', [{ ...manual.affiliations[0], original: event.target.value }])}
-              />
+              <label>Afiliaciones:</label>
+              <div className="manual-author-actions">
+                <button className="btn-action" type="button" onClick={handleAddManualAffiliation}>+ Afiliación</button>
+              </div>
+              <ul className="manual-affiliations">
+                {(manual.affiliations || []).map((affiliation, index) => (
+                  <li key={`${affiliation.id || 'aff'}-${index}`}>
+                    <span className="author-index">{index + 1}.</span>
+                    <input
+                      type="text"
+                      className="author-name"
+                      value={affiliation.original || ''}
+                      onChange={event => handleManualAffiliationChange(index, 'original', event.target.value)}
+                      placeholder="Institución / afiliación"
+                      aria-label={`Afiliación ${index + 1}`}
+                    />
+                    <input
+                      type="text"
+                      className="author-orcid"
+                      value={affiliation.email || ''}
+                      onChange={event => handleManualAffiliationChange(index, 'email', event.target.value)}
+                      placeholder="autor@institucion.edu"
+                      aria-label={`Email de afiliación ${index + 1}`}
+                    />
+                    <button
+                      className="btn-action author-remove"
+                      type="button"
+                      onClick={() => handleRemoveManualAffiliation(index)}
+                      aria-label={`Quitar afiliación ${index + 1}`}
+                    >
+                      Quitar
+                    </button>
+                  </li>
+                ))}
+              </ul>
             </div>
             <div className="manual-row">
               <label>Autores:</label>
@@ -562,6 +632,40 @@ function App() {
               <input type="text" value={manual.doi || ''} onChange={event => handleManualFieldChange('doi', event.target.value)} placeholder="10.18294/sc.2026.5939" />
             </div>
             <div className="manual-row">
+              <label>ISSN impreso/digital:</label>
+              <input type="text" value={manual.issn_ppub || ''} onChange={event => handleManualFieldChange('issn_ppub', event.target.value)} placeholder="1414-9089" />
+              <input type="text" value={manual.issn_epub || ''} onChange={event => handleManualFieldChange('issn_epub', event.target.value)} placeholder="1851-8265" />
+            </div>
+            <div className="manual-row">
+              <label>Revista / Abreviatura:</label>
+              <input type="text" value={manual.journalTitle || ''} onChange={event => handleManualFieldChange('journalTitle', event.target.value)} placeholder="Nombre de revista" />
+              <input type="text" value={manual.journalAbbrev || ''} onChange={event => handleManualFieldChange('journalAbbrev', event.target.value)} placeholder="Abreviatura" />
+            </div>
+            <div className="manual-row">
+              <label>Publisher / Idioma / SPS:</label>
+              <input type="text" value={manual.publisher || ''} onChange={event => handleManualFieldChange('publisher', event.target.value)} placeholder="SciELO" />
+              <input type="text" value={manual.lang || ''} onChange={event => handleManualFieldChange('lang', event.target.value)} placeholder="es" />
+              <input type="text" value={manual.sps || ''} onChange={event => handleManualFieldChange('sps', event.target.value)} placeholder="1.9" />
+            </div>
+            <div className="manual-row">
+              <label>Título (es/en):</label>
+              <input type="text" value={manual.articleTitle || ''} onChange={event => handleManualFieldChange('articleTitle', event.target.value)} placeholder="Título en español" />
+              <input type="text" value={manual.articleTitleEn || ''} onChange={event => handleManualFieldChange('articleTitleEn', event.target.value)} placeholder="Title in English" />
+            </div>
+            <div className="manual-row">
+              <label>Resumen (es):</label>
+              <textarea rows="3" value={manual.abstractEs || ''} onChange={event => handleManualFieldChange('abstractEs', event.target.value)} placeholder="Resumen" />
+            </div>
+            <div className="manual-row">
+              <label>Abstract (en):</label>
+              <textarea rows="3" value={manual.abstractEn || ''} onChange={event => handleManualFieldChange('abstractEn', event.target.value)} placeholder="Abstract" />
+            </div>
+            <div className="manual-row">
+              <label>Keywords ES/EN:</label>
+              <input type="text" value={manual.kwdsEsText || ''} onChange={event => handleManualFieldChange('kwdsEsText', event.target.value)} placeholder="salud; política; cuidado" />
+              <input type="text" value={manual.kwdsEnText || ''} onChange={event => handleManualFieldChange('kwdsEnText', event.target.value)} placeholder="health; policy; care" />
+            </div>
+            <div className="manual-row">
               <label>Pub-date (DD MM YYYY):</label>
               <input type="text" size="2" value={manual.pubDay || ''} onChange={event => handleManualFieldChange('pubDay', event.target.value)} placeholder="11" />
               <input type="text" size="2" value={manual.pubMonth || ''} onChange={event => handleManualFieldChange('pubMonth', event.target.value)} placeholder="03" />
@@ -578,12 +682,26 @@ function App() {
               <input type="text" value={manual.fundingText || ''} onChange={event => handleManualFieldChange('fundingText', event.target.value)} placeholder="CAPES; FAPESC" />
             </div>
             <div className="manual-row">
+              <label>Fechas (recibido/revisado/aceptado):</label>
+              <input type="text" value={manual.received || ''} onChange={event => handleManualFieldChange('received', event.target.value)} placeholder="11 03 2026" />
+              <input type="text" value={manual.revised || ''} onChange={event => handleManualFieldChange('revised', event.target.value)} placeholder="20 03 2026" />
+              <input type="text" value={manual.accepted || ''} onChange={event => handleManualFieldChange('accepted', event.target.value)} placeholder="25 03 2026" />
+            </div>
+            <div className="manual-row">
               <label>Conflicto de intereses:</label>
               <input type="text" value={manual.conflict || ''} onChange={event => handleManualFieldChange('conflict', event.target.value)} placeholder="Los autores declaran..." />
             </div>
             <div className="manual-row">
               <label>Contribuciones (texto):</label>
               <textarea rows="3" value={manual.contributionsText || ''} onChange={event => handleManualFieldChange('contributionsText', event.target.value)} placeholder="Melisse Eich: Conceptualización..." />
+            </div>
+            <div className="manual-row">
+              <label>Secciones (opcional):</label>
+              <input type="text" value={manual.sectionsText || ''} onChange={event => handleManualFieldChange('sectionsText', event.target.value)} placeholder="Introducción | Método | Resultados" />
+            </div>
+            <div className="manual-row">
+              <label>Cantidad de refs:</label>
+              <input type="text" value={manual.refCount || ''} onChange={event => handleManualFieldChange('refCount', event.target.value)} placeholder="25" />
             </div>
             <div className="manual-row">
               <button className="btn-action btn-accent" type="button" onClick={handleManualGenerate}>Generar XML desde metadatos</button>
@@ -663,6 +781,11 @@ function buildManualFilename(title) {
 }
 
 function collectManualMeta(manual) {
+  const parseList = value => String(value || '')
+    .split(/[;,|]/)
+    .map(entry => entry.trim())
+    .filter(Boolean);
+
   const authors = (manual.authors || [])
     .map(author => ({
       name: String(author.name || '').trim(),
@@ -670,16 +793,28 @@ function collectManualMeta(manual) {
     }))
     .filter(author => author.name);
 
-  const aff = String(manual.affiliations?.[0]?.original || '').trim();
+  const affiliations = (manual.affiliations || [])
+    .map((affiliation, index) => ({
+      id: `aff${index + 1}`,
+      original: String(affiliation?.original || '').trim(),
+      email: String(affiliation?.email || '').trim()
+    }))
+    .filter(affiliation => affiliation.original || affiliation.email);
   const contributions = String(manual.contributionsText || '').trim();
   const funding = String(manual.fundingText || '').trim();
   const pubDay = String(manual.pubDay || '').trim();
   const pubMonth = String(manual.pubMonth || '').trim();
   const pubYear = String(manual.pubYear || '').trim();
   const pubdate = [pubDay, pubMonth, pubYear].filter(Boolean).join(' ');
+  const kwdsEs = (manual.kwdsEsText || '').trim() ? parseList(manual.kwdsEsText) : (manual.kwdsEs || []);
+  const kwdsEn = (manual.kwdsEnText || '').trim() ? parseList(manual.kwdsEnText) : (manual.kwdsEn || []);
+  const sections = (manual.sectionsText || '').trim() ? parseList(manual.sectionsText) : (manual.sections || []);
 
   return {
     ...manual,
+    issn_ppub: String(manual.issn_ppub || '').trim(),
+    issn_epub: String(manual.issn_epub || '').trim(),
+    sps: String(manual.sps || '1.9').trim() || '1.9',
     doi: String(manual.doi || '').trim(),
     pubdate,
     volume: String(manual.volume || '').trim(),
@@ -688,11 +823,17 @@ function collectManualMeta(manual) {
     conflict: String(manual.conflict || '').trim(),
     contributions: contributions ? [contributions] : [],
     authors,
-    affiliations: aff ? [{ id: 'aff1', original: aff, email: '' }] : [],
+    affiliations,
     articleTitle: manual.articleTitle || document.title || 'Artículo desde metadatos manuales',
     articleTitleEn: manual.articleTitleEn || '',
     abstractEs: String(manual.abstractEs || '').replace(/\u2013/g, '-'),
     abstractEn: String(manual.abstractEn || '').replace(/\u2013/g, '-'),
+    kwdsEs,
+    kwdsEn,
+    sections,
+    received: String(manual.received || '').trim(),
+    revised: String(manual.revised || '').trim(),
+    accepted: String(manual.accepted || '').trim(),
     refCount: Number(manual.refCount || 0) || 0
   };
 }
@@ -741,8 +882,10 @@ function buildJatsFromMeta(meta) {
   articleMeta += '      </title-group>\n';
 
   articleMeta += '      <contrib-group>\n';
+  const availableAffCount = Math.max((meta.affiliations || []).length, 1);
   (meta.authors || []).forEach((author, index) => {
     const position = index + 1;
+    const ridAff = Math.min(position, availableAffCount);
     const parts = String(author.name || '').split(/\s+/).filter(Boolean);
     const surname = parts.length ? parts.pop() : '';
     const given = parts.join(' ');
@@ -755,7 +898,7 @@ function buildJatsFromMeta(meta) {
     if (author.orcid) {
       articleMeta += `        <contrib-id contrib-id-type="orcid">https://orcid.org/${e(author.orcid)}</contrib-id>\n`;
     }
-    articleMeta += `        <xref ref-type="aff" rid="aff${position}"><sup>${position}</sup></xref>\n`;
+    articleMeta += `        <xref ref-type="aff" rid="aff${ridAff}"><sup>${ridAff}</sup></xref>\n`;
     articleMeta += '      </contrib>\n';
   });
   articleMeta += '      </contrib-group>\n';
