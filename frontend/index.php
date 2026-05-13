@@ -1,16 +1,18 @@
 <?php
 /**
- * Production loader: Renders React app from Vite manifest or falls back to dev server
+ * Cargador del frontend:
+ * - Si existe el manifest de Vite, sirve los assets compilados (modo produccion).
+ * - Si no existe, apunta al servidor de desarrollo de Vite para trabajar en caliente.
  */
 
 $manifestPath = __DIR__ . '/dist/.vite/manifest.json';
 $isDev = !file_exists($manifestPath);
 
 if (!$isDev) {
-    // Production: Load from built manifest
+    // En produccion lee el manifest generado por Vite para conocer CSS y JS finales.
     $manifest = json_decode(file_get_contents($manifestPath), true);
     
-    // Find CSS and JS entries
+    // Recorre el manifest y junta todos los archivos de estilos y scripts a inyectar.
     $cssFiles = [];
     $jsFiles = [];
     
@@ -46,7 +48,7 @@ if (!$isDev) {
 </html>
     <?php
 } else {
-    // Development: Proxy to Vite dev server
+    // En desarrollo renderiza el HTML base y carga React desde Vite (HMR).
     ?><!DOCTYPE html>
 <html lang="es">
 <head>

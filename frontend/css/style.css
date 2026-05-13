@@ -1,4 +1,4 @@
-/* ── Variables ─────────────────────────────────────────────────────────────── */
+/* ── Variables base de tema: centralizan colores, tipografias y radios ───── */
 :root {
   --c-bg:        #0d0f14;
   --c-surface:   #14171f;
@@ -23,7 +23,7 @@
   --shadow: 0 4px 32px rgba(0,0,0,.4);
 }
 
-/* ── Reset ─────────────────────────────────────────────────────────────────── */
+/* ── Reset global: normaliza margenes, padding y box model ────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html { font-size: 15px; }
 body {
@@ -37,7 +37,7 @@ body {
   overflow-x: hidden;
 }
 
-/* ── Noise overlay ─────────────────────────────────────────────────────────── */
+/* ── Capa de textura: agrega grano visual suave sobre todo el layout ──────── */
 .noise {
   position: fixed;
   inset: 0;
@@ -48,7 +48,7 @@ body {
   background-size: 128px;
 }
 
-/* ── Header ────────────────────────────────────────────────────────────────── */
+/* ── Encabezado fijo visual: marca identidad y estado de la interfaz ──────── */
 .header {
   border-bottom: 1px solid var(--c-border);
   padding: 0 2rem;
@@ -105,7 +105,7 @@ body {
 .dot { width: 7px; height: 7px; border-radius: 50%; }
 .dot--green { background: var(--c-accent); box-shadow: 0 0 6px var(--c-accent); }
 
-/* ── Main ──────────────────────────────────────────────────────────────────── */
+/* ── Contenedor principal: define ancho, espaciado y flujo vertical ───────── */
 .main {
   flex: 1;
   max-width: 900px;
@@ -119,7 +119,7 @@ body {
   z-index: 1;
 }
 
-/* ── Steps bar ─────────────────────────────────────────────────────────────── */
+/* ── Barra de pasos: comunica progreso del flujo de conversion ────────────── */
 .steps-bar {
   display: flex;
   align-items: center;
@@ -168,7 +168,7 @@ body {
 .step-item.done .step-circle::before { content: '✓'; }
 .step-item.done .step-circle > * { display: none; }
 
-/* ── Panels ────────────────────────────────────────────────────────────────── */
+/* ── Paneles reutilizables: tarjetas con borde, fondo y animacion de entrada */
 .panel {
   background: var(--c-surface);
   border: 1px solid var(--c-border);
@@ -193,7 +193,7 @@ body {
 }
 .panel-title-icon { font-size: 18px; }
 
-/* ── Manual metadata panel ───────────────────────────────────────────────── */
+/* ── Formulario manual: grilla y controles para metadatos editables ───────── */
 .manual-meta-panel { padding-bottom: 1rem; }
 .manual-grid { display: flex; flex-direction: column; gap: .75rem; }
 .manual-row { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
@@ -223,7 +223,7 @@ body {
   .manual-author-actions { width: 100%; justify-content: flex-start; }
 }
 
-/* ── Drop zone ─────────────────────────────────────────────────────────────── */
+/* ── Zona de carga: area drag and drop con feedback visual ────────────────── */
 .drop-zone {
   border: 1.5px dashed var(--c-border2);
   border-radius: var(--radius);
@@ -263,7 +263,7 @@ body {
   font-family: var(--font-mono);
 }
 
-/* ── File pill ─────────────────────────────────────────────────────────────── */
+/* ── Pildora de archivo: muestra nombre del docx y accion de limpiar ──────── */
 .file-pill {
   display: flex;
   align-items: center;
@@ -286,7 +286,7 @@ body {
 }
 .pill-clear:hover { color: var(--c-error); }
 
-/* ── Progress ──────────────────────────────────────────────────────────────── */
+/* ── Barra de progreso: refleja estado de subida y generacion ─────────────── */
 .progress-track {
   margin-top: 1rem;
   height: 3px;
@@ -312,7 +312,7 @@ body {
   color: var(--c-muted);
 }
 
-/* ── Alert ─────────────────────────────────────────────────────────────────── */
+/* ── Alertas: mensajes de error, exito e informacion contextual ───────────── */
 .alert {
   margin-top: 1rem;
   padding: .65rem 1rem;
@@ -326,7 +326,7 @@ body {
 .alert--success { background: var(--c-accent-dim); border-color: var(--c-accent2); color: var(--c-accent); }
 .alert--info { background: var(--c-surface2); border-color: var(--c-border2); color: var(--c-muted); }
 
-/* ── Convert button ────────────────────────────────────────────────────────── */
+/* ── Boton principal: dispara conversion y muestra estados disabled/hover ─── */
 .btn-convert {
   display: flex;
   align-items: center;
@@ -355,7 +355,7 @@ body {
 .btn-convert:disabled { opacity: .35; cursor: not-allowed; border-color: var(--c-border); color: var(--c-muted); }
 .btn-icon { font-size: 16px; }
 
-/* ── Spinner ───────────────────────────────────────────────────────────────── */
+/* ── Spinner: indicador visual para operaciones en curso ──────────────────── */
 .spinner {
   display: inline-block;
   width: 14px; height: 14px;
@@ -367,7 +367,7 @@ body {
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* ── Metadata grid ─────────────────────────────────────────────────────────── */
+/* ── Grilla de metadatos: tarjetas para inspeccionar campos detectados ────── */
 .meta-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
@@ -397,7 +397,7 @@ body {
 }
 .meta-val--empty { color: var(--c-muted); font-style: italic; }
 
-/* ── Result panel ──────────────────────────────────────────────────────────── */
+/* ── Panel de resultado: acciones sobre XML y visor del contenido final ───── */
 .result-header {
   display: flex;
   align-items: flex-start;
@@ -450,7 +450,7 @@ body {
   padding-left: 10px;
 }
 
-/* ── Footer ────────────────────────────────────────────────────────────────── */
+/* ── Pie de pagina: cierre visual con contexto tecnico del modulo ─────────── */
 .footer {
   border-top: 1px solid var(--c-border);
   padding: 1rem 2rem;
@@ -467,13 +467,13 @@ body {
 }
 .footer-sep { opacity: .4; }
 
-/* ── Scrollbar ─────────────────────────────────────────────────────────────── */
+/* ── Scrollbar custom: mejora contraste del scroll en tema oscuro ─────────── */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--c-border2); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--c-muted); }
 
-/* ── Responsive ────────────────────────────────────────────────────────────── */
+/* ── Responsive: adapta espaciado y columnas para pantallas chicas ────────── */
 @media (max-width: 600px) {
   .header { padding: 0 1rem; }
   .main   { padding: 1.5rem 1rem; }

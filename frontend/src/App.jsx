@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import '../css/style.css';
 
 const createEmptyManual = () => ({
+  // Estado base del formulario manual: siempre parte limpio para evitar arrastre entre cargas.
   affiliations: [{ id: 'aff1', original: '', email: '' }],
   funding: [],
   authors: [{ name: '', orcid: '' }],
@@ -38,6 +39,7 @@ const createEmptyManual = () => ({
 });
 
 function splitPubDate(pubdate) {
+  // Convierte una fecha libre ("DD MM YYYY") en campos separados para inputs controlados.
   const parts = String(pubdate || '').trim().split(/\s+/).filter(Boolean);
   return {
     pubDay: parts[0] || '',
@@ -52,6 +54,7 @@ function buildManualFromMetadata(metadata) {
     return base;
   }
 
+  // Normaliza autores detectados y limpia prefijo URL en ORCID para editar solo el identificador.
   const authors = Array.isArray(metadata.authors)
     ? metadata.authors
       .map(author => ({
@@ -61,6 +64,7 @@ function buildManualFromMetadata(metadata) {
       .filter(author => author.name || author.orcid)
     : [];
 
+  // Mapea afiliaciones detectadas, conservando email cuando viene en arrays paralelos del backend.
   const affiliations = Array.isArray(metadata.affiliations)
     ? metadata.affiliations
       .map((affiliation, index) => ({
@@ -77,6 +81,7 @@ function buildManualFromMetadata(metadata) {
 
   const pub = splitPubDate(metadata.pubdate);
 
+  // Lleva los metadatos detectados al formulario manual para permitir correccion inmediata.
   return {
     ...base,
     issn_ppub: String(metadata.issn_ppub || '').trim(),
@@ -131,13 +136,13 @@ function App() {
   const [resultVisible, setResultVisible] = useState(false);
   const [copyLabel, setCopyLabel] = useState('Copiar');
   const [manual, setManual] = useState(() => createEmptyManual());
-  const [pdfLoading, setPdfLoading] = useState(false);
 
   const showAlert = (message, type) => {
     setAlert({ type, message, visible: true });
   };
 
   const metaFields = useMemo(() => {
+    // Tarjetas de inspeccion de metadatos: se recalculan solo cuando cambia "metadata".
     if (!metadata) {
       return [];
     }
@@ -171,6 +176,7 @@ function App() {
   }, [metadata]);
 
   useEffect(() => {
+    // Oculta la barra de progreso un instante despues de llegar a 100 para evitar parpadeo.
     if (progress.pct < 100) {
       return undefined;
     }
@@ -183,6 +189,7 @@ function App() {
   }, [progress.pct]);
 
   useEffect(() => {
+    // En modo manual, cualquier cambio en formulario regenera el XML visible en tiempo real.
     if (generatedMode !== 'manual' || !resultVisible) {
       return;
     }
@@ -195,6 +202,7 @@ function App() {
   }, [generatedMode, manual, resultVisible]);
 
   const resetPanels = () => {
+    // Limpia paneles de salida para que la UI no mezcle resultados de archivos distintos.
     setMetaVisible(false);
     setResultVisible(false);
     setGeneratedXml('');
@@ -208,6 +216,7 @@ function App() {
       return;
     }
 
+    // Al cargar un nuevo archivo se resetea metadata manual y paneles para empezar de cero.
     setCurrentFile(file);
     setManual(createEmptyManual());
     resetPanels();
@@ -220,6 +229,7 @@ function App() {
       return;
     }
 
+    // Flujo de conversion server-side: subida DOCX, parseo en backend y render de XML detectado.
     setGeneratedMode('upload');
     setStep(2);
     setProgress({ visible: true, pct: 15, label: 'Subiendo archivo...' });
@@ -252,6 +262,7 @@ function App() {
       setGeneratedXml(data.xml || '');
       setGeneratedFilename(data.filename || 'documento');
       setMetadata(data.metadata || null);
+      // Sincroniza el formulario manual con lo extraido para permitir ajustes finos sin recargar.
       setManual(buildManualFromMetadata(data.metadata));
       setMetaVisible(Boolean(data.metadata));
       setResultVisible(true);
@@ -270,6 +281,7 @@ function App() {
   };
 
   const handleManualGenerate = async () => {
+    // Flujo manual: no depende del backend y construye XML local a partir de los inputs.
     const meta = collectManualMeta(manual);
 
     setGeneratedMode('manual');
@@ -309,6 +321,7 @@ function App() {
       return;
     }
 
+    // Descarga local del XML generado usando Blob para evitar roundtrip al servidor.
     const blob = new Blob([generatedXml], { type: 'application/xml' });
     const url = URL.createObjectURL(blob);
     const anchor = Object.assign(document.createElement('a'), {
@@ -320,63 +333,6 @@ function App() {
     anchor.click();
     document.body.removeChild(anchor);
     URL.revokeObjectURL(url);
-  };
-
-  const handleGeneratePdf = async () => {
-    if (!generatedXml) {
-      return;
-    }
-
-    setPdfLoading(true);
-    setAlert({ type: 'info', message: '', visible: false });
-
-    try {
-      const response = await fetch('/backend/pdf.php', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          xml: generatedXml,
-          filename: generatedFilename || 'documento'
-        })
-      });
-
-      const raw = await response.text();
-      let result;
-      try {
-        result = JSON.parse(raw);
-      } catch {
-        throw new Error('Respuesta invalida del servidor al generar PDF');
-      }
-      if (!response.ok || !result.success) {
-        throw new Error(result.error || 'No se pudo generar el PDF');
-      }
-
-      let dataUrl;
-      let filename;
-
-      if (result.pdf) {
-        dataUrl = `data:application/pdf;base64,${result.pdf}`;
-        filename = result.filename;
-      } else if (result.html) {
-        dataUrl = `data:text/html;base64,${result.html}`;
-        filename = result.filename;
-      } else {
-        throw new Error('Respuesta inválida del servidor');
-      }
-
-      const link = document.createElement('a');
-      link.href = dataUrl;
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-
-      showAlert('PDF generado correctamente', 'success');
-    } catch (error) {
-      showAlert(`Error al generar PDF: ${error.message}`, 'error');
-    } finally {
-      setPdfLoading(false);
-    }
   };
 
   const handleManualFieldChange = (key, value) => {
@@ -743,9 +699,6 @@ function App() {
                 <button className="btn-action btn-accent" type="button" onClick={handleDownload}>
                   <span>Descargar .xml</span>
                 </button>
-                <button className="btn-action" type="button" onClick={handleGeneratePdf} disabled={pdfLoading}>
-                  <span>{pdfLoading ? 'Generando PDF...' : 'Generar PDF'}</span>
-                </button>
               </div>
             </div>
             <div className="xml-wrap">
@@ -781,11 +734,13 @@ function buildManualFilename(title) {
 }
 
 function collectManualMeta(manual) {
+  // Acepta multiples separadores para pegar listas desde Word/Excel sin formateo previo.
   const parseList = value => String(value || '')
     .split(/[;,|]/)
     .map(entry => entry.trim())
     .filter(Boolean);
 
+  // Solo conserva autores con nombre; ORCID puede quedar vacio.
   const authors = (manual.authors || [])
     .map(author => ({
       name: String(author.name || '').trim(),
@@ -793,6 +748,7 @@ function collectManualMeta(manual) {
     }))
     .filter(author => author.name);
 
+  // Recorta afiliaciones vacias para no generar nodos <aff> sin contenido.
   const affiliations = (manual.affiliations || [])
     .map((affiliation, index) => ({
       id: `aff${index + 1}`,
@@ -882,6 +838,7 @@ function buildJatsFromMeta(meta) {
   articleMeta += '      </title-group>\n';
 
   articleMeta += '      <contrib-group>\n';
+  // Si hay mas autores que afiliaciones, reutiliza la ultima afiliacion valida para evitar rid rotos.
   const availableAffCount = Math.max((meta.affiliations || []).length, 1);
   (meta.authors || []).forEach((author, index) => {
     const position = index + 1;
@@ -1049,6 +1006,7 @@ function buildJatsFromMeta(meta) {
 }
 
 function escapeXmlWithItalic(text) {
+  // Preserva marcas <italic> permitidas y escapa el resto para mantener XML bien formado.
   const value = String(text || '');
   let result = '';
   let offset = 0;
@@ -1070,6 +1028,7 @@ function escapeXmlWithItalic(text) {
 }
 
 function esc(value) {
+  // Escape minimo de caracteres reservados en XML.
   return String(value)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')

@@ -17,7 +17,6 @@ frontend/
 
 backend/
 ├── convert.php           # Endpoint DOCX -> XML
-├── pdf.php               # Endpoint XML -> PDF/HTML
 ├── DocxParser.php
 ├── debug.php
 └── meta_debug.json
@@ -26,7 +25,7 @@ backend/
 ## Punto de entrada
 
 - Frontend: `frontend/index.php`
-- Backend: `backend/convert.php` y `backend/pdf.php`
+- Backend: `backend/convert.php`
 
 ## Scripts
 
