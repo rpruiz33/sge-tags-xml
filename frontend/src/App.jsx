@@ -1,21 +1,26 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import '../css/style.css';
 
-const initialManual = {
-  affiliations: [{ id: 'aff1', original: 'Salud Colectiva', email: '' }],
+const createEmptyManual = () => ({
+  affiliations: [{ id: 'aff1', original: '', email: '' }],
   funding: [],
-  authors: [
-    { name: 'Melisse Eich', orcid: '0000-0001-8382-1354' },
-    { name: 'Marta Verdi', orcid: '0000-0001-7090-9541' },
-    { name: 'Pedro Paulo Scremin Martins', orcid: '0000-0003-2641-8563' },
-    { name: 'Mirelle Finkler', orcid: '0000-0001-5764-9183' }
-  ],
+  authors: [{ name: '', orcid: '' }],
+  doi: '',
+  pubDay: '',
+  pubMonth: '',
+  pubYear: '',
+  pubdate: '',
+  volume: '',
+  elocationId: '',
+  fundingText: '',
+  conflict: '',
+  contributionsText: '',
   refCount: 0,
-  journalTitle: 'XML JATS',
-  journalAbbrev: 'XML JATS',
-  publisher: 'SciELO',
+  journalTitle: '',
+  journalAbbrev: '',
+  publisher: '',
   lang: 'es',
-  articleTitle: 'XML JATS',
+  articleTitle: '',
   articleTitleEn: '',
   abstractEs: '',
   abstractEn: '',
@@ -24,7 +29,81 @@ const initialManual = {
   received: '',
   revised: '',
   accepted: ''
-};
+});
+
+function splitPubDate(pubdate) {
+  const parts = String(pubdate || '').trim().split(/\s+/).filter(Boolean);
+  return {
+    pubDay: parts[0] || '',
+    pubMonth: parts[1] || '',
+    pubYear: parts[2] || ''
+  };
+}
+
+function buildManualFromMetadata(metadata) {
+  const base = createEmptyManual();
+  if (!metadata) {
+    return base;
+  }
+
+  const authors = Array.isArray(metadata.authors)
+    ? metadata.authors
+      .map(author => ({
+        name: String(author?.name || '').trim(),
+        orcid: String(author?.orcid || '').trim().replace(/^https?:\/\/orcid\.org\//i, '')
+      }))
+      .filter(author => author.name || author.orcid)
+    : [];
+
+  const affiliations = Array.isArray(metadata.affiliations)
+    ? metadata.affiliations
+      .map((affiliation, index) => ({
+        id: `aff${index + 1}`,
+        original: String(typeof affiliation === 'string' ? affiliation : (affiliation?.original || '')).trim(),
+        email: String(typeof affiliation === 'string' ? '' : (affiliation?.email || metadata.affiliations_email?.[index] || '')).trim()
+      }))
+      .filter(affiliation => affiliation.original || affiliation.email)
+    : [];
+
+  const fundingList = Array.isArray(metadata.funding)
+    ? metadata.funding.map(item => String(item || '').trim()).filter(Boolean)
+    : [];
+
+  const pub = splitPubDate(metadata.pubdate);
+
+  return {
+    ...base,
+    doi: String(metadata.doi || '').trim(),
+    pubDay: pub.pubDay,
+    pubMonth: pub.pubMonth,
+    pubYear: pub.pubYear,
+    pubdate: String(metadata.pubdate || '').trim(),
+    volume: String(metadata.volume || '').trim(),
+    elocationId: String(metadata['elocation-id'] || metadata.elocationId || '').trim(),
+    fundingText: String(metadata.fundingStatement || '').trim() || fundingList.join('; '),
+    conflict: String(metadata.conflict || '').trim(),
+    contributionsText: Array.isArray(metadata.contributions)
+      ? metadata.contributions.map(entry => String(entry || '').trim()).filter(Boolean).join(' ')
+      : String(metadata.contributionsText || '').trim(),
+    refCount: Number(metadata.refCount || 0) || 0,
+    journalTitle: String(metadata.journalTitle || '').trim(),
+    journalAbbrev: String(metadata.journalAbbrev || metadata.journalTitle || '').trim(),
+    publisher: String(metadata.publisher || '').trim(),
+    lang: String(metadata.lang || 'es').trim() || 'es',
+    articleTitle: String(metadata.articleTitle || '').trim(),
+    articleTitleEn: String(metadata.articleTitleEn || '').trim(),
+    abstractEs: String(metadata.abstractEs || '').trim(),
+    abstractEn: String(metadata.abstractEn || '').trim(),
+    kwdsEs: Array.isArray(metadata.kwdsEs) ? metadata.kwdsEs : [],
+    kwdsEn: Array.isArray(metadata.kwdsEn) ? metadata.kwdsEn : [],
+    received: String(metadata.received || '').trim(),
+    revised: String(metadata.revised || '').trim(),
+    accepted: String(metadata.accepted || '').trim(),
+    funding: fundingList,
+    authors: authors.length ? authors : base.authors,
+    affiliations: affiliations.length ? affiliations : base.affiliations
+  };
+}
 
 function App() {
   const [currentFile, setCurrentFile] = useState(null);
@@ -39,7 +118,7 @@ function App() {
   const [metaVisible, setMetaVisible] = useState(false);
   const [resultVisible, setResultVisible] = useState(false);
   const [copyLabel, setCopyLabel] = useState('Copiar');
-  const [manual, setManual] = useState(initialManual);
+  const [manual, setManual] = useState(() => createEmptyManual());
   const [pdfLoading, setPdfLoading] = useState(false);
 
   const showAlert = (message, type) => {
@@ -115,6 +194,7 @@ function App() {
     }
 
     setCurrentFile(file);
+    setManual(createEmptyManual());
     resetPanels();
     setAlert({ type: 'info', message: '', visible: false });
     setStep(1);
@@ -157,6 +237,7 @@ function App() {
       setGeneratedXml(data.xml || '');
       setGeneratedFilename(data.filename || 'documento');
       setMetadata(data.metadata || null);
+      setManual(buildManualFromMetadata(data.metadata));
       setMetaVisible(Boolean(data.metadata));
       setResultVisible(true);
       setStep(3);
@@ -296,6 +377,23 @@ function App() {
     }));
   };
 
+  const handleAddManualAuthor = () => {
+    setManual(current => ({
+      ...current,
+      authors: [...(current.authors || []), { name: '', orcid: '' }]
+    }));
+  };
+
+  const handleRemoveManualAuthor = indexToRemove => {
+    setManual(current => {
+      const filtered = (current.authors || []).filter((_, index) => index !== indexToRemove);
+      return {
+        ...current,
+        authors: filtered.length ? filtered : [{ name: '', orcid: '' }]
+      };
+    });
+  };
+
   const fileInputId = 'fileInput';
 
   return (
@@ -381,6 +479,7 @@ function App() {
                 type="button"
                 onClick={() => {
                   setCurrentFile(null);
+                  setManual(createEmptyManual());
                   resetPanels();
                   setAlert({ type: 'info', message: '', visible: false });
                   setStep(1);
@@ -423,7 +522,10 @@ function App() {
               />
             </div>
             <div className="manual-row">
-              <label>Autores (predefinidos):</label>
+              <label>Autores:</label>
+              <div className="manual-author-actions">
+                <button className="btn-action" type="button" onClick={handleAddManualAuthor}>+ Autor</button>
+              </div>
               <ul className="manual-authors">
                 {manual.authors.map((author, index) => (
                   <li key={`${author.name}-${index}`}>
@@ -443,6 +545,14 @@ function App() {
                       aria-label={`ORCID del autor ${index + 1}`}
                       placeholder="0000-0000-0000-0000"
                     />
+                    <button
+                      className="btn-action author-remove"
+                      type="button"
+                      onClick={() => handleRemoveManualAuthor(index)}
+                      aria-label={`Quitar autor ${index + 1}`}
+                    >
+                      Quitar
+                    </button>
                   </li>
                 ))}
               </ul>
