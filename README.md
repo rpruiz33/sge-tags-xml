@@ -7,7 +7,6 @@ Aplicación para convertir archivos DOCX a XML JATS (SPS 1.9), con frontend en R
 ```
 sge-tags-xml/
 ├── frontend/
-│   ├── index.php           # Loader web (producción/dev)
 │   ├── index.html          # Entrada de Vite
 │   ├── package.json
 │   ├── package-lock.json
@@ -24,7 +23,7 @@ sge-tags-xml/
 
 ## Punto de entrada
 
-- Frontend: `frontend/index.php`
+- Frontend: `frontend/index.html` en Vite o `frontend/dist/` después del build
 - Endpoint principal backend: `backend/convert.php`
 
 ## Requisitos
@@ -53,7 +52,7 @@ npm run preview
 
 ## Flujo de uso
 
-1. Abrir `frontend/index.php` en el entorno web.
+1. Abrir el frontend con Vite en desarrollo o servir `frontend/dist/` en producción.
 2. Subir un `.docx` desde la interfaz.
 3. El frontend envía el archivo a `backend/convert.php`.
 4. El backend parsea metadatos y devuelve XML JATS.
