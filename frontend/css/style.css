@@ -205,11 +205,15 @@ body {
 .manual-authors .author-index { min-width: 24px; color: var(--c-accent); }
 .manual-authors .author-name { flex: 1 1 260px; min-width: 180px; background: var(--c-surface2); border: 1px solid var(--c-border); color: var(--c-text); padding: .45rem .55rem; border-radius: 8px; font-family: var(--font-mono); }
 .manual-authors .author-orcid { flex: 0 1 220px; min-width: 180px; background: var(--c-surface2); border: 1px solid var(--c-border); color: var(--c-text); padding: .45rem .55rem; border-radius: 8px; font-family: var(--font-mono); }
+.manual-author-actions { display: flex; gap: .5rem; align-items: center; }
+.manual-authors .author-remove { padding: .35rem .65rem; font-size: 11px; color: var(--c-error); border-color: rgba(248, 113, 113, .45); }
+.manual-authors .author-remove:hover { background: var(--c-error-dim); border-color: var(--c-error); }
 .btn-action { padding: .45rem .9rem; }
 
 @media (max-width: 600px) {
   .manual-row label { width: 100%; }
   .manual-row { flex-direction: column; align-items: stretch; }
+  .manual-author-actions { width: 100%; justify-content: flex-start; }
 }
 
 /* ── Drop zone ─────────────────────────────────────────────────────────────── */
