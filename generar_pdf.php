@@ -51,7 +51,7 @@ function renderPdfDocumentationHtml(): string
         '  <li>El usuario sube un archivo .docx desde la interfaz principal.</li>' .
         '  <li><code>convert.php</code> recibe el archivo y delega el análisis a <code>DocxParser.php</code>.</li>' .
         '  <li>El parser extrae líneas del documento, identifica autores, títulos, afiliaciones, fechas, resúmenes y referencias.</li>' .
-        '  <li>Si faltan datos, el sistema completa la estructura usando <code>pattern.xml</code> como referencia secundaria.</li>' .
+        '  <li>El parser intenta detectar automáticamente todos los metadatos disponibles dentro del DOCX.</li>' .
         '  <li>Se genera el XML JATS final con la estructura requerida por SPS 1.9.</li>' .
         '  <li>El front permite revisar el XML, editar metadatos manuales y descargar el resultado.</li>' .
         '</ol>' .
@@ -64,10 +64,9 @@ function renderPdfDocumentationHtml(): string
         '<table>' .
         '  <tr><th>Archivo</th><th>Rol</th></tr>' .
         '  <tr><td><code>index.php</code></td><td>Interfaz principal con carga de DOCX, edición rápida y vista previa.</td></tr>' .
-        '  <tr><td><code>js/app.js</code></td><td>Lógica del front, carga de patrón, reconstrucción de autores y generación de XML manual.</td></tr>' .
+        '  <tr><td><code>js/app.js</code></td><td>Lógica del front, carga de DOCX, reconstrucción de autores y generación de XML manual.</td></tr>' .
         '  <tr><td><code>convert.php</code></td><td>Endpoint de conversión automática.</td></tr>' .
         '  <tr><td><code>DocxParser.php</code></td><td>Extracción, normalización y generación del XML JATS.</td></tr>' .
-        '  <tr><td><code>pattern.xml</code></td><td>Referencia estructural para completar metadatos y validar formato.</td></tr>' .
         '  <tr><td><code>pdf.php</code></td><td>Salida de documentación en PDF o HTML imprimible.</td></tr>' .
         '</table>' .
         '<h2>5. Qué detecta automáticamente</h2>' .

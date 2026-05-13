@@ -19,8 +19,6 @@ const resultPanel = document.getElementById('resultPanel');
 const xmlOutput   = document.getElementById('xmlOutput');
 const copyBtn     = document.getElementById('copyBtn');
 const downloadBtn = document.getElementById('downloadBtn');
-const loadPatternBtn = document.getElementById('loadPatternBtn');
-const patternXmlField = document.getElementById('patternXml');
 const generateManualBtn = document.getElementById('generateManualBtn');
 const manualDoi = document.getElementById('manualDoi');
 const manualPubDay = document.getElementById('manualPubDay');
@@ -43,48 +41,6 @@ let manualState = {
   authors: [],
   refCount: 0,
 };
-
-async function loadPatternXml() {
-  const candidates = ['pattern.xml', patternXmlField ? null : null].filter(Boolean);
-  for (const url of candidates) {
-    try {
-      const resp = await fetch(url, { cache: 'no-store' });
-      if (!resp.ok) continue;
-      const raw = await resp.text();
-      if (raw && raw.trim()) return raw.trim();
-    } catch (_) {
-      // ignore and continue to the next source
-    }
-  }
-
-  return patternXmlField ? patternXmlField.value.trim() : '';
-}
-
-async function showPatternFrontOnly() {
-  const raw = await loadPatternXml();
-  if (!raw) {
-    showAlert('No hay XML patrón disponible', 'error');
-    return;
-  }
-
-  generatedXml = raw;
-  generatedFilename = 'patron_scielo_article';
-  xmlOutput.textContent = generatedXml;
-  resultPanel.classList.remove('hidden');
-  metaPanel.classList.add('hidden');
-  if (uploadPanel) uploadPanel.classList.remove('hidden');
-  if (manualMetaPanel) manualMetaPanel.classList.remove('hidden');
-  setStep(4);
-  showAlert('XML patrón cargado. La vista quedó en modo front-only.', 'success');
-
-  try {
-    populateFormFromPattern(raw);
-  } catch (err) {
-    console.warn('No se pudo autopoblar desde el patrón:', err);
-  }
-}
-
-// No auto-load pattern.xml; keep it as an optional manual action.
 
 // ── Drag & drop ───────────────────────────────────────────────────────────────
 dropZone.addEventListener('click', () => fileInput.click());
@@ -257,16 +213,6 @@ copyBtn.addEventListener('click', () => {
 // ── Download ──────────────────────────────────────────────────────────────────
 downloadBtn.addEventListener('click', () => {
   if (!generatedXml) return;
-  // Si está cargado el patrón, descargar directamente el archivo sin procesar
-  if (generatedFilename === 'patron_scielo_article') {
-    const a = document.createElement('a');
-    a.href = 'pattern.xml';
-    a.download = 'pattern.xml';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    return;
-  }
   // Para archivos generados, crear blob
   const blob = new Blob([generatedXml], { type: 'application/xml' });
   const url  = URL.createObjectURL(blob);
@@ -276,167 +222,6 @@ downloadBtn.addEventListener('click', () => {
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 });
-
-  // ── Cargar patrón XML (front-only)
-  if (loadPatternBtn && patternXmlField) {
-    loadPatternBtn.addEventListener('click', () => {
-      showPatternFrontOnly().then(() => {
-        resultPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      });
-    });
-  }
-
-// Autopoblar campos del formulario a partir del XML patrón
-function populateFormFromPattern(xmlString) {
-  const parser = new DOMParser();
-  const parseableXml = /xmlns:xlink=/.test(xmlString)
-    ? xmlString
-    : xmlString.replace('<article ', '<article xmlns:xlink="http://www.w3.org/1999/xlink" ');
-  const doc = parser.parseFromString(parseableXml, 'application/xml');
-  if (doc.getElementsByTagName('parsererror').length) throw new Error('XML inválido');
-
-  const q = sel => {
-    const el = doc.querySelector(sel);
-    return el ? (el.textContent || '').trim() : '';
-  };
-
-  const parseDate = node => {
-    if (!node) return '';
-    const d = node.querySelector('day')?.textContent?.trim() || '';
-    const m = node.querySelector('month')?.textContent?.trim() || '';
-    const y = node.querySelector('year')?.textContent?.trim() || '';
-    return [d, m, y].filter(Boolean).join(' ').trim();
-  };
-
-  const normalizeDash = text => String(text || '').replace(/\u2013/g, '-').trim();
-
-  const kwdEs = Array.from(doc.querySelectorAll('kwd-group[xml\\:lang="es"] kwd')).map(n => n.textContent.trim()).filter(Boolean);
-  const kwdEn = Array.from(doc.querySelectorAll('kwd-group[xml\\:lang="en"] kwd')).map(n => n.textContent.trim()).filter(Boolean);
-
-  const affNodes = Array.from(doc.querySelectorAll('article-meta aff'));
-  const parsedAffiliations = affNodes.map((affNode, idx) => {
-    const original = (affNode.querySelector('institution[content-type="original"]')?.textContent || affNode.querySelector('institution')?.textContent || '').trim();
-    const email = (affNode.querySelector('email')?.textContent || '').trim();
-    return { id: affNode.getAttribute('id') || `aff${idx + 1}`, original, email };
-  }).filter(a => a.original);
-
-  const parsedAuthors = Array.from(doc.querySelectorAll('contrib-group contrib[contrib-type="author"]')).map(c => {
-    const surname = c.querySelector('surname')?.textContent?.trim() || '';
-    const given = c.querySelector('given-names')?.textContent?.trim() || '';
-    const name = `${given} ${surname}`.trim() || (c.textContent || '').trim();
-    const orcid = (c.querySelector('contrib-id[contrib-id-type="orcid"]')?.textContent || '').trim().replace(/^https?:\/\/orcid\.org\//i, '');
-    return { name, orcid };
-  }).filter(a => a.name);
-
-  manualState = {
-    lang: (doc.documentElement?.getAttribute('xml:lang') || 'es').trim() || 'es',
-    sps: (doc.documentElement?.getAttribute('specific-use') || 'sps-1.9').trim() || 'sps-1.9',
-    journalTitle: q('journal-title'),
-    journalAbbrev: q('abbrev-journal-title[abbrev-type="publisher"]') || q('journal-id[journal-id-type="nlm-ta"]'),
-    issn_ppub: q('issn[pub-type="ppub"]'),
-    issn_epub: q('issn[pub-type="epub"]'),
-    publisher: q('publisher-name'),
-    articleTitle: q('article-title'),
-    articleTitleEn: q('trans-title-group[xml\\:lang="en"] trans-title') || q('trans-title'),
-    abstractEs: normalizeDash(q('abstract p')),
-    abstractEn: normalizeDash(q('trans-abstract[xml\\:lang="en"] p') || q('trans-abstract p')),
-    kwdsEs: kwdEs,
-    kwdsEn: kwdEn,
-    affiliations: parsedAffiliations,
-    authors: parsedAuthors,
-    received: parseDate(doc.querySelector('history date[date-type="received"]')),
-    revised: parseDate(doc.querySelector('history date[date-type="rev-recd"]')),
-    accepted: parseDate(doc.querySelector('history date[date-type="accepted"]')),
-    refCount: Number(doc.querySelector('counts ref-count')?.getAttribute('count') || 0) || 0,
-    funding: Array.from(doc.querySelectorAll('funding-group award-group funding-source')).map(n => n.textContent.trim()).filter(Boolean),
-    fundingStatement: q('funding-statement'),
-  };
-
-  // DOI
-  const doi = q('article-id[pub-id-type="doi"]');
-  if (manualDoi) manualDoi.value = doi;
-
-  // Pub-date
-  const pub = doc.querySelector('pub-date[date-type="pub"]');
-  if (pub) {
-    const day = pub.querySelector('day')?.textContent?.trim() || '';
-    const month = pub.querySelector('month')?.textContent?.trim() || '';
-    const year = pub.querySelector('year')?.textContent?.trim() || '';
-    if (manualPubDay) manualPubDay.value = day;
-    if (manualPubMonth) manualPubMonth.value = month;
-    if (manualPubYear) manualPubYear.value = year;
-  }
-
-  // Volume / elocation-id
-  const volume = q('volume');
-  const eloc = q('elocation-id');
-  if (manualVolume) manualVolume.value = volume;
-  if (manualEloc) manualEloc.value = eloc;
-
-  // Funding: join award-group sources and funding-statement
-  const fundingSources = manualState.funding || [];
-  const fundingStatement = q('funding-statement');
-  const fundingText = fundingSources.length ? fundingSources.join('; ') : fundingStatement;
-  if (manualFunding) manualFunding.value = fundingText;
-
-  // Conflict and contributions
-  const conflict = q('fn[fn-type="conflict"] p') || q('fn[fn-type="conflict"]');
-  const contrib = q('fn[fn-type="equal"] p') || q('fn[fn-type="equal"]');
-  if (manualConflict) manualConflict.value = conflict;
-  if (manualContrib) manualContrib.value = contrib;
-
-  // Affiliations: populate first aff into manualAff
-  const aff1 = q('aff[id="aff1"] institution[content-type="original"]') || q('aff institution[content-type="original"]');
-  const mainAff = aff1 || q('aff[id="aff1"] institution') || q('aff institution');
-  const manualAffField = document.getElementById('manualAff');
-  if (manualAffField) manualAffField.value = mainAff;
-
-  // Authors: rebuild the authors list in the UI
-  const authors = parsedAuthors;
-  const authorsList = document.querySelector('.manual-authors');
-  if (authorsList && authors.length) {
-    authorsList.innerHTML = '';
-    authors.forEach((a, idx) => {
-      const sup = idx + 1;
-      const li = document.createElement('li');
-      const nameText = a.name;
-      const nameInput = document.createElement('input');
-      nameInput.type = 'text';
-      nameInput.className = 'author-name';
-      nameInput.name = `author_name_${sup}`;
-      nameInput.autocomplete = 'off';
-      nameInput.spellcheck = false;
-      nameInput.value = nameText;
-      nameInput.setAttribute('aria-label', `Nombre del autor ${sup}`);
-
-      const orcidInput = document.createElement('input');
-      orcidInput.type = 'text';
-      orcidInput.className = 'author-orcid';
-      orcidInput.name = `author_orcid_${sup}`;
-      orcidInput.autocomplete = 'off';
-      orcidInput.spellcheck = false;
-      orcidInput.value = (a.orcid || '').replace('https://orcid.org/','');
-      orcidInput.placeholder = '0000-0000-0000-0000';
-      orcidInput.setAttribute('aria-label', `ORCID del autor ${sup}`);
-
-      const index = document.createElement('span');
-      index.className = 'author-index';
-      index.textContent = `${sup}.`;
-
-      li.appendChild(index);
-      li.appendChild(nameInput);
-      li.appendChild(orcidInput);
-      authorsList.appendChild(li);
-    });
-  }
-
-  // Render a minimal metadata preview
-  const kwdGroupsEs = Array.from(doc.querySelectorAll('kwd-group')).filter(n => (n.getAttribute('xml:lang') || '').toLowerCase() === 'es');
-  const kwdsEs = kwdGroupsEs.flatMap(group => Array.from(group.querySelectorAll('kwd')).map(n => n.textContent.trim()).filter(Boolean));
-  const metaPreview = { doi, authors: authors.map(a=>({ name: a.name })), kwdsEs, funding: fundingSources };
-  renderMetadata(metaPreview);
-  metaPanel.classList.remove('hidden');
-}
 
   // ── Generar XML desde metadatos manuales
   if (generateManualBtn) {
