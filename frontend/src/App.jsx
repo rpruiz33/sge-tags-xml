@@ -48,6 +48,36 @@ function splitPubDate(pubdate) {
   };
 }
 
+function formatFundingItem(item) {
+  if (!item) {
+    return '';
+  }
+
+  if (typeof item === 'string') {
+    return item.trim();
+  }
+
+  const source = String(item.source || '').trim();
+  const awardId = String(item.awardId || '').trim();
+
+  if (source && awardId) {
+    return `${source} ${awardId}`;
+  }
+
+  return source || awardId || String(item).trim();
+}
+
+function formatListValue(value, separator = ' · ') {
+  if (!Array.isArray(value) || !value.length) {
+    return '';
+  }
+
+  return value
+    .map(item => String(item || '').trim())
+    .filter(Boolean)
+    .join(separator);
+}
+
 function buildManualFromMetadata(metadata) {
   const base = createEmptyManual();
   if (!metadata) {
@@ -76,7 +106,11 @@ function buildManualFromMetadata(metadata) {
     : [];
 
   const fundingList = Array.isArray(metadata.funding)
-    ? metadata.funding.map(item => String(item || '').trim()).filter(Boolean)
+    ? metadata.funding.map(formatFundingItem).filter(Boolean)
+    : [];
+  const fundingStatement = String(metadata.fundingStatement || '').trim();
+  const sectionTitles = Array.isArray(metadata.bodySections)
+    ? metadata.bodySections.map(section => String(section?.title || '').trim()).filter(Boolean)
     : [];
 
   const pub = splitPubDate(metadata.pubdate);
@@ -94,7 +128,7 @@ function buildManualFromMetadata(metadata) {
     pubdate: String(metadata.pubdate || '').trim(),
     volume: String(metadata.volume || '').trim(),
     elocationId: String(metadata['elocation-id'] || metadata.elocationId || '').trim(),
-    fundingText: String(metadata.fundingStatement || '').trim() || fundingList.join('; '),
+    fundingText: fundingStatement || fundingList.join('; '),
     conflict: String(metadata.conflict || '').trim(),
     contributionsText: Array.isArray(metadata.contributions)
       ? metadata.contributions.map(entry => String(entry || '').trim()).filter(Boolean).join(' ')
@@ -112,7 +146,7 @@ function buildManualFromMetadata(metadata) {
     kwdsEn: Array.isArray(metadata.kwdsEn) ? metadata.kwdsEn : [],
     kwdsEsText: Array.isArray(metadata.kwdsEs) ? metadata.kwdsEs.join('; ') : '',
     kwdsEnText: Array.isArray(metadata.kwdsEn) ? metadata.kwdsEn.join('; ') : '',
-    sectionsText: Array.isArray(metadata.sections) ? metadata.sections.join(' | ') : '',
+    sectionsText: Array.isArray(metadata.sections) ? metadata.sections.join(' | ') : sectionTitles.join(' | '),
     bodySections: Array.isArray(metadata.bodySections) ? metadata.bodySections : [],
     received: String(metadata.received || '').trim(),
     revised: String(metadata.revised || '').trim(),
@@ -166,8 +200,8 @@ function App() {
       { k: 'Aprobado', v: metadata.accepted },
       { k: 'Keywords (es)', v: metadata.kwdsEs?.join(', ') },
       { k: 'Keywords (en)', v: metadata.kwdsEn?.join(', ') },
-      { k: 'Financiamiento', v: metadata.funding?.join('; ') },
-      { k: 'Secciones', v: metadata.sections?.join(' · ') }
+      { k: 'Financiamiento', v: formatListValue(Array.isArray(metadata.funding) ? metadata.funding.map(formatFundingItem) : [], '; ') || metadata.fundingStatement },
+      { k: 'Secciones', v: formatListValue(Array.isArray(metadata.sections) ? metadata.sections : (metadata.bodySections || []).map(section => section?.title), ' · ') }
     ];
 
     return fields.map(field => ({
@@ -1043,6 +1077,21 @@ function buildBackXml(meta) {
   back += '        </element-citation>\n';
   back += '      </ref>\n';
   back += '    </ref-list>\n';
+
+  const fundingItems = Array.isArray(meta?.funding)
+    ? meta.funding.map(item => String(item || '').trim()).filter(Boolean)
+    : [];
+  const fundingStatement = String(meta?.fundingStatement || '').trim();
+
+  if (fundingItems.length || fundingStatement) {
+    back += '    <fn-group>\n';
+    back += '      <fn fn-type="financial-disclosure" id="fn1">\n';
+    back += '        <label>Financiamiento</label>\n';
+    back += `        <p> ${esc(fundingStatement || fundingItems.join('; '))}</p>\n`;
+    back += '      </fn>\n';
+    back += '    </fn-group>\n';
+  }
+
   back += '  </back>\n';
   return back;
 }
