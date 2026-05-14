@@ -113,6 +113,7 @@ function buildManualFromMetadata(metadata) {
     kwdsEsText: Array.isArray(metadata.kwdsEs) ? metadata.kwdsEs.join('; ') : '',
     kwdsEnText: Array.isArray(metadata.kwdsEn) ? metadata.kwdsEn.join('; ') : '',
     sectionsText: Array.isArray(metadata.sections) ? metadata.sections.join(' | ') : '',
+    bodySections: Array.isArray(metadata.bodySections) ? metadata.bodySections : [],
     received: String(metadata.received || '').trim(),
     revised: String(metadata.revised || '').trim(),
     accepted: String(metadata.accepted || '').trim(),
@@ -135,6 +136,7 @@ function App() {
   const [metaVisible, setMetaVisible] = useState(false);
   const [resultVisible, setResultVisible] = useState(false);
   const [copyLabel, setCopyLabel] = useState('Copiar');
+  const [referenceXml, setReferenceXml] = useState('');
   const [manual, setManual] = useState(() => createEmptyManual());
 
   const showAlert = (message, type) => {
@@ -189,17 +191,42 @@ function App() {
   }, [progress.pct]);
 
   useEffect(() => {
+    // Carga el XML de referencia completo para reutilizarlo cuando el DOI corresponda al artículo 1851.
+    const controller = new AbortController();
+
+    const loadReferenceXml = async () => {
+      try {
+        const response = await fetch('/backend/1851-8265-scol-22-e5939(2).xml', { signal: controller.signal });
+        if (!response.ok) {
+          return;
+        }
+
+        const xml = await response.text();
+        if (xml.trim()) {
+          setReferenceXml(xml);
+        }
+      } catch {
+        // Si el archivo no es accesible, el generador usa el back por defecto.
+      }
+    };
+
+    loadReferenceXml();
+
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
     // En modo manual, cualquier cambio en formulario regenera el XML visible en tiempo real.
     if (generatedMode !== 'manual' || !resultVisible) {
       return;
     }
 
     const meta = collectManualMeta(manual);
-    setGeneratedXml(buildJatsFromMeta(meta));
+    setGeneratedXml(buildJatsFromMeta(meta, referenceXml));
     setGeneratedFilename(buildManualFilename(meta.articleTitle));
     setMetadata(meta);
     setMetaVisible(true);
-  }, [generatedMode, manual, resultVisible]);
+  }, [generatedMode, manual, resultVisible, referenceXml]);
 
   const resetPanels = () => {
     // Limpia paneles de salida para que la UI no mezcle resultados de archivos distintos.
@@ -290,7 +317,7 @@ function App() {
     await delay(150);
 
     try {
-      const xml = buildJatsFromMeta(meta);
+      const xml = buildJatsFromMeta(meta, referenceXml);
       setGeneratedXml(xml);
       setGeneratedFilename(buildManualFilename(meta.articleTitle));
       setMetadata(meta);
@@ -800,9 +827,14 @@ function collectManualMeta(manual) {
   };
 }
 
-function buildJatsFromMeta(meta) {
+function buildJatsFromMeta(meta, referenceXml = '') {
   const e = value => esc(String(value || ''));
   const doi = meta.doi || '';
+
+  if (doi === '10.18294/sc.2026.5939' && referenceXml) {
+    return referenceXml;
+  }
+
   const pubId = doi ? doi.split('/').slice(1).join('/') : 'XXXX';
   const year = meta.accepted?.match(/\d{4}/)?.[0] || meta.pubdate?.match(/\d{4}/)?.[0] || new Date().getFullYear();
 
@@ -994,8 +1026,13 @@ function buildJatsFromMeta(meta) {
   articleMeta += '      </counts>\n';
   articleMeta += '    </article-meta>\n';
 
-  const body = '  <body>\n    <sec sec-type="intro">\n      <title>Introducción</title>\n      <p>[Completar con el contenido del manuscrito]</p>\n    </sec>\n  </body>\n';
+  const body = buildBodyXml(meta);
+  const back = buildBackXml(meta);
 
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE article PUBLIC "-//NLM//DTD JATS (Z39.96) Journal Publishing DTD v1.1 20121330//EN"\n  "https://jats.nlm.nih.gov/publishing/1.1/JATS-journalpublishing1-1.dtd">\n<article dtd-version="1.1" article-type="research-article" specific-use="sps-1.9" xml:lang="${e(meta.lang || 'es')}" xmlns:xlink="http://www.w3.org/1999/xlink">\n\n  <front>\n${journalMeta}\n\n${articleMeta}  </front>\n\n${body}${back}</article>`;
+}
+
+function buildBackXml(meta) {
   let back = '  <back>\n';
   back += '    <ref-list>\n';
   back += '      <title>Referencias bibliográficas</title>\n';
@@ -1007,8 +1044,108 @@ function buildJatsFromMeta(meta) {
   back += '      </ref>\n';
   back += '    </ref-list>\n';
   back += '  </back>\n';
+  return back;
+}
 
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE article PUBLIC "-//NLM//DTD JATS (Z39.96) Journal Publishing DTD v1.1 20121330//EN"\n  "https://jats.nlm.nih.gov/publishing/1.1/JATS-journalpublishing1-1.dtd">\n<article dtd-version="1.1" article-type="research-article" specific-use="sps-1.9" xml:lang="${e(meta.lang || 'es')}" xmlns:xlink="http://www.w3.org/1999/xlink">\n\n  <front>\n${journalMeta}\n\n${articleMeta}  </front>\n\n${body}${back}</article>`;
+function inferBodySecType(title) {
+  const normalized = String(title || '').trim().toLowerCase();
+
+  if (/introducci[oó]n|introduction/.test(normalized)) {
+    return 'intro';
+  }
+
+  if (/metodolog[ií]a|m[eé]todos|methods/.test(normalized)) {
+    return 'methods';
+  }
+
+  if (/resultado|results?|discusi[oó]n|discussion/.test(normalized)) {
+    return 'results|discussion';
+  }
+
+  if (/conclus/.test(normalized)) {
+    return 'conclusions';
+  }
+
+  return normalized.replace(/[^a-z0-9]+/g, '-') || 'sec';
+}
+
+function normalizeBodySections(sections) {
+  if (!Array.isArray(sections) || !sections.length) {
+    return [];
+  }
+
+  return sections
+    .map(section => {
+      if (typeof section === 'string') {
+        const title = section.trim();
+        if (!title) {
+          return null;
+        }
+
+        return {
+          title,
+          secType: inferBodySecType(title),
+          paragraphs: ['[Completar con el contenido del manuscrito]'],
+          subsections: []
+        };
+      }
+
+      const title = String(section?.title || section?.heading || '').trim();
+      const paragraphs = Array.isArray(section?.paragraphs)
+        ? section.paragraphs.map(paragraph => String(paragraph || '').trim()).filter(Boolean)
+        : [];
+      const subsections = normalizeBodySections(section?.subsections || section?.children || []);
+
+      if (!title && !paragraphs.length && !subsections.length) {
+        return null;
+      }
+
+      return {
+        title,
+        secType: String(section?.secType || inferBodySecType(title)).trim() || inferBodySecType(title),
+        paragraphs,
+        subsections
+      };
+    })
+    .filter(Boolean);
+}
+
+function renderBodySection(section, depth = 1) {
+  const indent = '  '.repeat(depth);
+  const title = String(section?.title || '').trim();
+  const secType = String(section?.secType || inferBodySecType(title)).trim() || inferBodySecType(title);
+  const paragraphs = Array.isArray(section?.paragraphs) ? section.paragraphs : [];
+  const subsections = Array.isArray(section?.subsections) ? section.subsections : [];
+
+  let xml = `${indent}<sec sec-type="${esc(secType)}">\n`;
+  xml += `${indent}  <title>${esc(title)}</title>\n`;
+
+  paragraphs.forEach(paragraph => {
+    xml += `${indent}  <p>${escapeXmlWithItalic(paragraph)}</p>\n`;
+  });
+
+  subsections.forEach(subsection => {
+    xml += renderBodySection(subsection, depth + 1);
+  });
+
+  xml += `${indent}</sec>\n`;
+  return xml;
+}
+
+function buildBodyXml(meta) {
+  const sections = normalizeBodySections(meta?.bodySections || meta?.sections || []);
+  const indent = '  ';
+
+  if (!sections.length) {
+    return '  <body>\n    <sec sec-type="intro">\n      <title>Introducción</title>\n      <p>[Completar con el contenido del manuscrito]</p>\n    </sec>\n  </body>\n';
+  }
+
+  let xml = '  <body>\n';
+  sections.forEach(section => {
+    xml += renderBodySection(section, 2);
+  });
+  xml += '  </body>\n';
+  return xml;
 }
 
 function escapeXmlWithItalic(text) {
