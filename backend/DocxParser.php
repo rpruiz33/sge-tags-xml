@@ -360,11 +360,10 @@ class DocxParser
         $issns = [];
         // Recorre $clean para procesar cada elemento detectado.
         foreach ($clean as $line) {
-            // Si aparece un ISSN, ejecuta las instrucciones internas de ese caso.
-            if (preg_match_all('/\b\d{4}-\d{3}[\dxX]\b/u', $line, $m)) {
-                // Recorre $m[0] para procesar cada elemento detectado.
-                foreach ($m[0] as $issn) {
-                    // Guarda este valor como nuevo elemento de $issns.
+            // Si aparecen ISSN en la línea, los capturamos en $matches.
+            if (preg_match_all('/\b\d{4}-\d{3}[\dxX]\b/u', $line, $matches) && !empty($matches[0]) && is_array($matches[0])) {
+                // Recorre $matches[0] para procesar cada ISSN detectado.
+                foreach ($matches[0] as $issn) {
                     $issns[] = $issn;
                 }
             }
@@ -2282,18 +2281,9 @@ class DocxParser
                 $sourcePart = $parts[2] ?? '';
 
                 // Determinar tipo de publicación
-                $hasUrl      = (bool)preg_match('/https?:\\/\\//i', $cleanRef);
-                $hasInternet = (bool)preg_match('/\[Internet\]/iu', $cleanRef);
-                $hasDoi      = (bool)preg_match('/10\\.\\d{4,9}\\//u', $cleanRef);
-                // Es webpage si tiene URL visible O lleva [Internet], salvo que sea claramente
-                // una revista académica (nombre de revista + indicios de publicación periódica).
-                // Palabras como "Saúde" o "Salud" aparecen también en documentos legales, por eso
-                // se exige que además haya señales de revista (DOI, vol/issue) para excluirla.
-                $looksLikeJournalRef = $hasDoi
-                    || preg_match('/\\b(?:vol|v\\.)\\s*\\d+/iu', $cleanRef)
-                    || preg_match('/\\d+\\([\\d\\-]+\\):/u', $cleanRef);
-                $isWebpage = ($hasUrl || $hasInternet)
-                    && !($looksLikeJournalRef && preg_match('/\\b(Revista|Journal|Annals|Interface|Saúde|Salud|Cuadernos|Trayectorias|Holos)\\b/iu', $cleanRef));
+                $hasUrl  = (bool)preg_match('/https?:\\/\\//i', $cleanRef);
+                $hasDoi  = (bool)preg_match('/10\\.\\d{4,9}\\//u', $cleanRef);
+                $isWebpage = $hasUrl && !preg_match('/\\b(Revista|Journal|Annals|Interface|Saúde|Salud|Cuadernos|Trayectorias|Holos)\\b/iu', $cleanRef);
                 $isJournal = !$isWebpage && (
                     stripos($cleanRef, 'revista') !== false
                     || stripos($cleanRef, 'journal') !== false
@@ -2337,8 +2327,7 @@ class DocxParser
                             }
                             $xml .= "\t\t\t\t\t\t</name>\r\n";
                         }
-                        // <etal/> solo cuando el texto original lo dice explícitamente.
-                        if ($hasEtal) {
+                        if ($hasEtal || count($authorsList) > 3) {
                             $xml .= "\t\t\t\t\t\t<etal/>\r\n";
                         }
                         $xml .= "\t\t\t\t\t</person-group>\r\n";
@@ -2346,39 +2335,19 @@ class DocxParser
                 }
 
                 // Título / fuente
-                // Para webpages: extraer la fuente completa entre el autor y el año/[Internet]/URL.
-                // Para journals: usar la parte tras el segundo punto (nombre de revista).
-                // Para books: usar la parte tras el primer punto (título del libro).
-                if ($isWebpage) {
-                    // Fuente = título del documento: desde después del autor hasta [Internet].
-                    // Se limpia cualquier ciudad suelta que aparezca antes de [Internet].
-                    $sourceWebRaw = '';
-                    if (preg_match('/^[^.]+\.\s*(.+?)\s*(?:\[Internet\])/su', $cleanRef, $swm)) {
-                        // Quitar ciudad suelta al final (ej. ". Brasília" antes de [Internet])
-                        $sourceWebRaw = preg_replace('/\.\s*[A-ZÁÉÍÓÚ][a-záéíóúa-z]{2,30}\.?\s*$/u', '', trim($swm[1]));
-                        $sourceWebRaw = trim($sourceWebRaw, '. ');
-                    } elseif ($titlePart !== '') {
-                        $sourceWebRaw = $titlePart;
-                    }
-                    if ($sourceWebRaw !== '') {
-                        $xml .= "\t\t\t\t\t<source>" . htmlspecialchars($sourceWebRaw) . "</source>\r\n";
-                    }
-                } elseif ($titlePart) {
+                if ($titlePart) {
                     $tag = ($pubType === 'journal') ? 'article-title' : 'source';
                     $xml .= "\t\t\t\t\t<$tag>" . htmlspecialchars($titlePart) . "</$tag>\r\n";
                 }
 
                 if ($pubType === 'book') {
-                    // Publisher-loc y publisher-name: buscar el patrón "Ciudad: Editorial" que aparece
-                    // DESPUÉS del título (típicamente al final de la referencia, antes del año y punto final).
-                    // El patrón correcto es una ciudad corta seguida de ": " y una editorial, terminando en ";".
-                    // Ej: "Madrid: Editorial Triacastela; 2011" -> loc=Madrid, name=Editorial Triacastela
-                    // Ej: "Firenze: Giunti Editore; 2010"       -> loc=Firenze,  name=Giunti Editore
-                    // Usamos la porción de texto después del último "." que antecede a la ciudad,
-                    // limitando la ciudad a 1-2 palabras sin ":" propio.
-                    if (preg_match('/\.\s*([A-ZÁÉÍÓÚÀÈÙÂÊÎÔÛÄËÏÖÜ][^:.]{1,30}?):\s*([^;.\d][^;.]{2,60}?)\s*;\s*\d{4}/u', $cleanRef, $pm2)) {
-                        $xml .= "\t\t\t\t\t<publisher-loc>" . htmlspecialchars(trim($pm2[1])) . "</publisher-loc>\r\n";
-                        $xml .= "\t\t\t\t\t<publisher-name>" . htmlspecialchars(trim($pm2[2])) . "</publisher-name>\r\n";
+                    // Publisher-loc: solo la ciudad (antes del ":"), publisher-name: solo la editorial
+                    if (preg_match('/:\s*([^;\n]+?)(?:;|$)/u', $cleanRef, $pm)) {
+                        // Buscar patrón "Ciudad: Editorial"
+                        if (preg_match('/([A-ZÁÉÍÓÚÑ][^:]{2,30}):\s*([^;\n.]{3,60}?)(?:[;.]|$)/u', $cleanRef, $pm2)) {
+                            $xml .= "\t\t\t\t\t<publisher-loc>" . htmlspecialchars(trim($pm2[1])) . "</publisher-loc>\r\n";
+                            $xml .= "\t\t\t\t\t<publisher-name>" . htmlspecialchars(trim($pm2[2])) . "</publisher-name>\r\n";
+                        }
                     }
                     if (preg_match('/(\\d+)\\.?\\s*(?:ed|edition)\\b/iu', $cleanRef, $me)) {
                         $xml .= "\t\t\t\t\t<edition>" . htmlspecialchars($me[1]) . ". ed</edition>\r\n";
@@ -2544,15 +2513,6 @@ class DocxParser
         return preg_replace_callback('/(?<![\d\.\/\w])(\d{4,7})(?![\d\.\/\w])/u', function ($m) {
             $digits = $m[1];
             $len = strlen($digits);
-
-            // Proteger años (1900-2099) para que no se partan como páginas.
-            if ($len === 4) {
-                $asInt = (int)$digits;
-                if ($asInt >= 1900 && $asInt <= 2099) {
-                    return $digits;
-                }
-            }
-
             if ($len % 2 === 0) {
                 $half = $len / 2;
                 $a = substr($digits, 0, $half);
