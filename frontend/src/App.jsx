@@ -919,62 +919,62 @@ function buildJatsFromMeta(meta, referenceXml = '') {
     const surname = parts.length ? parts.pop() : '';
     const given = parts.join(' ');
 
-    articleMeta += '      <contrib contrib-type="author">\n';
-    articleMeta += '        <name>\n';
-    articleMeta += `          <surname>${e(surname)}</surname>\n`;
-    articleMeta += `          <given-names>${e(given)}</given-names>\n`;
-    articleMeta += '        </name>\n';
+    articleMeta += '\t\t\t<contrib contrib-type="author">\r\n';
+    articleMeta += '\t\t\t\t<name>\r\n';
+    articleMeta += `\t\t\t\t\t<surname>${e(surname)}</surname>\r\n`;
+    articleMeta += `\t\t\t\t\t<given-names>${e(given)}</given-names>\r\n`;
+    articleMeta += '\t\t\t\t</name>\r\n';
     if (author.orcid) {
-      articleMeta += `        <contrib-id contrib-id-type="orcid">https://orcid.org/${e(author.orcid)}</contrib-id>\n`;
+      articleMeta += `\t\t\t\t<contrib-id contrib-id-type="orcid">https://orcid.org/${e(author.orcid)}</contrib-id>\r\n`;
     }
-    articleMeta += `        <xref ref-type="aff" rid="aff${ridAff}"><sup>${ridAff}</sup></xref>\n`;
-    articleMeta += '      </contrib>\n';
+    articleMeta += `\t\t\t\t<xref ref-type="aff" rid="aff${ridAff}"><sup>${ridAff}</sup></xref>\r\n`;
+    articleMeta += '\t\t\t</contrib>\r\n';
   });
-  articleMeta += '      </contrib-group>\n';
+  articleMeta += '\t\t</contrib-group>\r\n';
 
   (meta.affiliations || []).forEach((affiliation, index) => {
     const position = index + 1;
     const affOriginal = typeof affiliation === 'string' ? affiliation : (affiliation.original || '');
     const affEmail = typeof affiliation === 'string' ? '' : (affiliation.email || '');
 
-    articleMeta += `      <aff id="aff${position}">\n`;
-    articleMeta += `        <label>${position}</label>\n`;
-    articleMeta += `        <institution content-type="original">${e(affOriginal)}</institution>\n`;
+    articleMeta += `\t\t\t<aff id="aff${position}">\r\n`;
+    articleMeta += `\t\t\t\t<label>${position}</label>\r\n`;
+    articleMeta += `\t\t\t\t<institution content-type="original">${e(affOriginal)}</institution>\r\n`;
     if (affEmail) {
-      articleMeta += `        <email>${e(affEmail)}</email>\n`;
+      articleMeta += `\t\t\t\t<email>${e(affEmail)}</email>\r\n`;
     }
-    articleMeta += '      </aff>\n';
+    articleMeta += '\t\t\t</aff>\r\n';
   });
 
-  articleMeta += '      <author-notes>\n';
+  articleMeta += '\t\t<author-notes>\r\n';
   if (meta.conflict) {
-    articleMeta += '        <fn fn-type="conflict" id="fn2">\n';
-    articleMeta += '          <label>Conflicto de Intereses</label>\n';
-    articleMeta += `          <p>${e(meta.conflict)}</p>\n`;
-    articleMeta += '        </fn>\n';
+    articleMeta += '\t\t\t<fn fn-type="conflict" id="fn2">\r\n';
+    articleMeta += '\t\t\t\t<label>Conflicto de Intereses</label>\r\n';
+    articleMeta += `\t\t\t\t<p>${e(meta.conflict)}</p>\r\n`;
+    articleMeta += '\t\t\t</fn>\r\n';
   }
   if (meta.contributions && meta.contributions.length) {
-    articleMeta += '        <fn fn-type="equal" id="fn3">\n';
-    articleMeta += '          <label>Contribución autoral</label>\n';
-    articleMeta += `          <p>${e(meta.contributions.join(' '))}</p>\n`;
-    articleMeta += '        </fn>\n';
+    articleMeta += '\t\t\t<fn fn-type="equal" id="fn3">\r\n';
+    articleMeta += '\t\t\t\t<label>Contribución autoral</label>\r\n';
+    articleMeta += `\t\t\t\t<p>${e(meta.contributions.join(' '))}</p>\r\n`;
+    articleMeta += '\t\t\t</fn>\r\n';
   }
-  articleMeta += '      </author-notes>\n';
+  articleMeta += '\t\t</author-notes>\r\n';
 
   if (meta.pubdate || meta.volume || meta['elocation-id']) {
-    articleMeta += '      <pub-date date-type="pub" publication-format="electronic">\n';
+    articleMeta += '\t\t<pub-date date-type="pub" publication-format="electronic">\r\n';
     if (meta.pubdate) {
       const parts = String(meta.pubdate).split(/\s+/);
-      if (parts[0]) articleMeta += `        <day>${e(parts[0])}</day>\n`;
-      if (parts[1]) articleMeta += `        <month>${e(parts[1])}</month>\n`;
-      if (parts[2]) articleMeta += `        <year>${e(parts[2])}</year>\n`;
+      if (parts[0]) articleMeta += `\t\t\t<day>${e(parts[0])}</day>\r\n`;
+      if (parts[1]) articleMeta += `\t\t\t<month>${e(parts[1])}</month>\r\n`;
+      if (parts[2]) articleMeta += `\t\t\t<year>${e(parts[2])}</year>\r\n`;
     } else {
-      articleMeta += `        <year>${e(year)}</year>\n`;
+      articleMeta += `\t\t\t<year>${e(year)}</year>\r\n`;
     }
-    articleMeta += '      </pub-date>\n';
+    articleMeta += '\t\t</pub-date>\r\n';
   }
-  if (meta.volume) articleMeta += `      <volume>${e(meta.volume)}</volume>\n`;
-  if (meta['elocation-id']) articleMeta += `      <elocation-id>${e(meta['elocation-id'])}</elocation-id>\n`;
+  if (meta.volume) articleMeta += `\t\t<volume>${e(meta.volume)}</volume>\r\n`;
+  if (meta['elocation-id']) articleMeta += `\t\t<elocation-id>${e(meta['elocation-id'])}</elocation-id>\r\n`;
 
   if (meta.received || meta.revised || meta.accepted) {
     const addHistoryDate = (type, value) => {
@@ -1067,15 +1067,104 @@ function buildJatsFromMeta(meta, referenceXml = '') {
 }
 
 function buildBackXml(meta) {
+  const e = value => esc(String(value || ''));
   let back = '\t<back>\r\n';
   back += '\t\t<ref-list>\r\n';
   back += '\t\t\t<title>Referencias bibliográficas</title>\r\n';
-  back += '\t\t\t<ref id="B1">\r\n';
-  back += '\t\t\t\t<label>1</label>\r\n';
-  back += '\t\t\t\t<element-citation publication-type="journal">\r\n';
-  back += '\t\t\t\t\t<comment>[Completar referencias en formato JATS element-citation]</comment>\r\n';
-  back += '\t\t\t\t</element-citation>\r\n';
-  back += '\t\t\t</ref>\r\n';
+
+  const references = meta.references || [];
+  if (references.length > 0) {
+    references.forEach((refText, i) => {
+      const num = i + 1;
+
+      const cleanRef = esc(String(refText || '').trim().replace(/<[^>]*>/g, '')); // Remove HTML tags
+      let year = '';
+      const yearMatch = cleanRef.match(/\b(19|20)\d{2}\b/);
+      if (yearMatch) {
+        year = yearMatch[0];
+      }
+
+      // Determine publication type (heuristic)
+      let pubType = 'journal'; // Default
+      if (/(editora|ed\.|São Paulo|Madrid|Firenze|book|livro)/iu.test(cleanRef)) {
+        pubType = 'book';
+      }
+
+      const parts = cleanRef.split('.').map(part => part.trim()).filter(Boolean);
+
+      const authorPart = parts[0] || '';
+      const titlePart = parts[1] || '';
+
+      back += `\t\t\t<ref id="B${num}">\r\n`;
+      back += `\t\t\t\t<label>${num}</label>\r\n`;
+      back += `\t\t\t\t<mixed-citation>${escapeXmlWithItalic(refText)}</mixed-citation>\r\n`;
+      back += `\t\t\t\t<element-citation publication-type="${pubType}">\r\n`;
+
+      // Author parsing
+      if (authorPart) {
+        back += '\t\t\t\t\t<person-group person-group-type="author">\r\n';
+        // Split by comma or 'and'/'y' for multiple authors
+        const individualAuthors = authorPart.split(/,\s*(?=[A-Za-z])|\s+and\s+|\s+y\s+/).filter(Boolean);
+        individualAuthors.forEach(authorName => {
+          authorName = authorName.trim();
+          if (!authorName) return;
+
+          const nameParts = authorName.split(' ');
+          const surname = nameParts.shift(); // First word as surname
+          const given = nameParts.join(' '); // Rest as given names
+
+          back += '\t\t\t\t\t\t<name>\r\n';
+          back += `\t\t\t\t\t\t\t<surname>${e(surname)}</surname>\r\n`;
+          if (given) {
+            back += `\t\t\t\t\t\t\t<given-names>${e(given)}</given-names>\r\n`;
+          }
+          back += '\t\t\t\t\t\t</name>\r\n';
+        });
+        back += '\t\t\t\t\t</person-group>\r\n';
+      }
+
+      // Title/Source
+      if (titlePart) {
+        const tag = (pubType === 'journal') ? 'article-title' : 'source';
+        back += `\t\t\t\t\t<${tag}>${e(titlePart)}</${tag}>\r\n`;
+      }
+
+      // Journal Name (if journal) or Publisher Info (if book)
+      if (pubType === 'journal' && parts[2]) { // parts[2] might be the journal name
+          back += `\t\t\t\t\t<source>${e(parts[2])}</source>\r\n`;
+      } else if (pubType === 'book') {
+          // Try to find publisher info in parts[1], parts[2] or later
+          for (let k = 1; k < parts.length; k++) {
+              const part = parts[k];
+              const pm = part.match(/(?<loc>[^:]+):\s*(?<name>[^;]+);/u);
+              if (pm && pm.groups) {
+                  back += `\t\t\t\t\t<publisher-loc>${e(pm.groups.loc.trim())}</publisher-loc>\r\n`;
+                  back += `\t\t\t\t\t<publisher-name>${e(pm.groups.name.trim())}</publisher-name>\r\n`;
+                  break; // Found it, stop searching
+              }
+          }
+      }
+
+      // Year
+      if (year) {
+        back += `\t\t\t\t\t<year>${year}</year>\r\n`;
+      }
+
+      back += '\t\t\t\t</element-citation>\r\n';
+      back += '\t\t\t</ref>\r\n';
+    });
+  } else {
+    // Fallback for empty references
+    const fallbackCount = Number(meta.refCount || 1);
+    for (let i = 1; i <= fallbackCount; i++) {
+      back += `\t\t\t<ref id="B${i}">\r\n`;
+      back += `\t\t\t\t<label>${i}</label>\r\n`;
+      back += '\t\t\t\t<element-citation publication-type="journal">\r\n';
+      back += `\t\t\t\t\t<comment>[Completar referencia ${i} en formato JATS element-citation]</comment>\r\n`;
+      back += '\t\t\t\t</element-citation>\r\n';
+      back += '\t\t\t</ref>\r\n';
+    }
+  }
   back += '\t\t</ref-list>\r\n';
 
   const fundingItems = Array.isArray(meta?.funding)
@@ -1160,24 +1249,24 @@ function normalizeBodySections(sections) {
 }
 
 function renderBodySection(section, depth = 1) {
-  const indent = '  '.repeat(depth);
+  const indent = '\t'.repeat(depth);
   const title = String(section?.title || '').trim();
   const secType = String(section?.secType || inferBodySecType(title)).trim() || inferBodySecType(title);
   const paragraphs = Array.isArray(section?.paragraphs) ? section.paragraphs : [];
   const subsections = Array.isArray(section?.subsections) ? section.subsections : [];
 
-  let xml = `${indent}<sec sec-type="${esc(secType)}">\n`;
-  xml += `${indent}  <title>${esc(title)}</title>\n`;
+  let xml = `${indent}<sec sec-type="${esc(secType)}">\r\n`;
+  xml += `${indent}\t<title>${esc(title)}</title>\r\n`;
 
   paragraphs.forEach(paragraph => {
-    xml += `${indent}  <p>${escapeXmlWithItalic(paragraph)}</p>\n`;
+    xml += `${indent}\t<p>${escapeXmlWithItalic(paragraph)}</p>\r\n`;
   });
 
   subsections.forEach(subsection => {
     xml += renderBodySection(subsection, depth + 1);
   });
 
-  xml += `${indent}</sec>\n`;
+  xml += `${indent}</sec>\r\n`;
   return xml;
 }
 
