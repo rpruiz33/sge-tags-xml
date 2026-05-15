@@ -2016,18 +2016,18 @@ class DocxParser
         $xml .= "<front>\n";
         // Agrega contenido al texto acumulado en $xml.
         $xml .= $journalMeta . "\n";
-        // Agrega contenido al texto acumulado en $xml.
-        $xml .= rtrim($articleMeta, "\n") . "\n" . $t1 . "</front>\n";
+        // Se asegura el uso de CRLF y tabs para cerrar el front
+        $xml .= rtrim($articleMeta, "\r\n") . "\r\n" . $t1 . "</front>\r\n";
 
         $xml .= $this->buildBodyXml($meta);
         $xml .= $this->buildBackXml($meta);
 
         // Agrega contenido al texto acumulado en $xml.
-        $xml .= "</article>\n";
+        $xml .= "</article>\r\n";
 
         // Evita líneas en blanco extra antes del cierre de <front>.
         // Normaliza el texto con una expresión regular y lo guarda en $xml.
-        $xml = preg_replace('/<\/article-meta>\n(?:\t*\n)+\t<\/front>\n/', "</article-meta>\n\t</front>\n", $xml);
+        $xml = preg_replace('/<\/article-meta>\r?\n(?:\t*\r?\n)+\t<\/front>\r?\n/', "</article-meta>\r\n\t</front>\r\n", $xml);
 
         // Devuelve el resultado final de esta parte del proceso.
         return $xml;
@@ -2133,9 +2133,9 @@ class DocxParser
      */
     private function buildBackXml(array $meta)
     {
-        $xml = "\n  <back>\n";
-        $xml .= "    <ref-list>\n";
-        $xml .= "      <title>Referencias bibliográficas</title>\n";
+        $xml = "\r\n\t<back>\r\n";
+        $xml .= "\t\t<ref-list>\r\n";
+        $xml .= "\t\t\t<title>Referencias bibliográficas</title>\r\n";
 
         $references = $meta['references'] ?? [];
         $count = count($references);
@@ -2144,61 +2144,127 @@ class DocxParser
             foreach ($references as $i => $refText) {
                 $num = $i + 1;
                 
-                // Intento simple de granularidad en la referencia
                 $cleanRef = trim(strip_tags($refText));
                 $year = preg_match('/\b(19|20)\d{2}\b/', $cleanRef, $my) ? $my[0] : '';
-                // Split por punto para separar autor de título tentativamente
-                $parts = explode('.', $cleanRef);
-                $authorPart = trim($parts[0] ?? '');
-                $titlePart = trim($parts[1] ?? '');
+                $parts = array_map('trim', explode('.', $cleanRef));
+                $authorPart = $parts[0] ?? '';
+                $titlePart = $parts[1] ?? '';
+                $sourcePart = $parts[2] ?? '';
 
-                $xml .= "      <ref id=\"B$num\">\n";
-                $xml .= "        <label>$num</label>\n";
-                $xml .= "        <mixed-citation>" . $this->escapeXmlWithItalic($refText) . "</mixed-citation>\n";
-                $xml .= "        <element-citation publication-type=\"journal\">\n";
+                $xml .= "\t\t\t<ref id=\"B$num\">\r\n";
+                $xml .= "\t\t\t\t<label>$num</label>\r\n";
+                $xml .= "\t\t\t\t<mixed-citation>" . $this->escapeXmlWithItalic($refText) . "</mixed-citation>\r\n";
+                
+                $isJournal = (stripos($cleanRef, 'revista') !== false || stripos($cleanRef, 'vol.') !== false || preg_match('/\d+\(([\d\-]+)\):/', $cleanRef));
+                $pubType = $isJournal ? 'journal' : 'book';
+                
+                $xml .= "\t\t\t\t<element-citation publication-type=\"$pubType\">\r\n";
+                
                 if ($authorPart) {
-                    $xml .= "          <person-group person-group-type=\"author\">\n";
-                    $xml .= "            <name><surname>" . htmlspecialchars($authorPart) . "</surname></name>\n";
-                    $xml .= "          </person-group>\n";
+                    $isCollab = preg_match('/\b(Organiza|Ministerio|Conselho|Universida|Fundaç|World Health|WHO|PAHO|UNESCO|United Nations|Comisión|Committee)\b/iu', $authorPart);
+                    if ($isCollab) {
+                        $xml .= "\t\t\t\t\t<collab>" . htmlspecialchars($authorPart) . "</collab>\r\n";
+                    } else {
+                        $xml .= "\t\t\t\t\t<person-group person-group-type=\"author\">\r\n";
+                        $xml .= "\t\t\t\t\t\t<name>\r\n";
+                        $nameParts = preg_split('/\s+/', trim(preg_replace('/et al\b/i', '', $authorPart)), -1, PREG_SPLIT_NO_EMPTY);
+                        $surname = array_shift($nameParts);
+                        $xml .= "\t\t\t\t\t\t\t<surname>" . htmlspecialchars($surname) . "</surname>\r\n";
+                        if ($nameParts) $xml .= "\t\t\t\t\t\t\t<given-names>" . htmlspecialchars(implode(' ', $nameParts)) . "</given-names>\r\n";
+                        $xml .= "\t\t\t\t\t\t</name>\r\n";
+                        if (preg_match('/et al\b/i', $authorPart)) {
+                            $xml .= "\t\t\t\t\t\t<etal/>\r\n";
+                        }
+                        $xml .= "\t\t\t\t\t</person-group>\r\n";
+                    }
                 }
+
                 if ($titlePart) {
-                    $xml .= "          <article-title>" . htmlspecialchars($titlePart) . "</article-title>\n";
+                    $tag = ($pubType === 'journal') ? 'article-title' : 'source';
+                    $xml .= "\t\t\t\t\t<$tag>" . htmlspecialchars($titlePart) . "</$tag>\r\n";
                 }
+
+                if ($pubType === 'book') {
+                    if ($sourcePart && strpos($sourcePart, ':') !== false) {
+                        $bits = explode(':', $sourcePart, 2);
+                        $xml .= "\t\t\t\t\t<publisher-loc>" . htmlspecialchars(trim($bits[0])) . "</publisher-loc>\r\n";
+                        $xml .= "\t\t\t\t\t<publisher-name>" . htmlspecialchars(trim(explode(';', $bits[1])[0])) . "</publisher-name>\r\n";
+                    }
+                    if (preg_match('/(\d+)\.?\s*(?:ed|edition)\b/iu', $cleanRef, $me)) {
+                        $xml .= "\t\t\t\t\t<edition>" . htmlspecialchars($me[1]) . "</edition>\r\n";
+                    }
+                } else {
+                    if ($sourcePart && !preg_match('/^\d/', $sourcePart)) {
+                        $xml .= "\t\t\t\t\t<source>" . htmlspecialchars($sourcePart) . "</source>\r\n";
+                    }
+                    if (preg_match('/\b(\d+)\(([\d\-]+)\):(\d+)[-–](\d+)\b/u', $cleanRef, $mp)) {
+                        $xml .= "\t\t\t\t\t<volume>{$mp[1]}</volume>\r\n";
+                        $xml .= "\t\t\t\t\t<issue>{$mp[2]}</issue>\r\n";
+                        $xml .= "\t\t\t\t\t<fpage>{$mp[3]}</fpage>\r\n";
+                        $xml .= "\t\t\t\t\t<lpage>{$mp[4]}</lpage>\r\n";
+                    } elseif (preg_match('/\b(\d+):(\d+)[-–](\d+)\b/u', $cleanRef, $mp)) {
+                        $xml .= "\t\t\t\t\t<volume>{$mp[1]}</volume>\r\n";
+                        $xml .= "\t\t\t\t\t<fpage>{$mp[2]}</fpage>\r\n";
+                        $xml .= "\t\t\t\t\t<lpage>{$mp[3]}</lpage>\r\n";
+                    } elseif (preg_match('/\b(\d+)\(([\d\-]+)\):(e\d+)\b/u', $cleanRef, $mp)) {
+                        $xml .= "\t\t\t\t\t<volume>{$mp[1]}</volume>\r\n";
+                        $xml .= "\t\t\t\t\t<issue>{$mp[2]}</issue>\r\n";
+                        $xml .= "\t\t\t\t\t<elocation-id>{$mp[3]}</elocation-id>\r\n";
+                    } elseif (preg_match('/\b(\d+):(e\d+)\b/u', $cleanRef, $mp)) {
+                        $xml .= "\t\t\t\t\t<volume>{$mp[1]}</volume>\r\n";
+                        $xml .= "\t\t\t\t\t<elocation-id>{$mp[2]}</elocation-id>\r\n";
+                    }
+                }
+
                 if ($year) {
-                    $xml .= "          <year>$year</year>\n";
+                    $xml .= "\t\t\t\t\t<year>$year</year>\r\n";
                 }
-                $xml .= "        </element-citation>\n";
-                $xml .= "      </ref>\n";
+
+                if (preg_match('/10\.\d{4,9}\/\S+/u', $cleanRef, $md)) {
+                    $xml .= "\t\t\t\t\t<pub-id pub-id-type=\"doi\">" . htmlspecialchars($md[0]) . "</pub-id>\r\n";
+                }
+
+                if (preg_match('/https?:\/\/\S+/i', $cleanRef, $mu)) {
+                    $u = rtrim($mu[0], '.]');
+                    $xml .= "\t\t\t\t\t<ext-link ext-link-type=\"uri\" xlink:href=\"" . htmlspecialchars($u) . "\">" . htmlspecialchars($u) . "</ext-link>\r\n";
+                }
+
+                if (preg_match('/\[citado\s+(.+?)\]/iu', $cleanRef, $mad)) {
+                    $xml .= "\t\t\t\t\t<date-in-citation content-type=\"access-date\">" . htmlspecialchars($mad[1]) . "</date-in-citation>\r\n";
+                }
+
+                if (preg_match('/\b(?:Disponible en|Available from)\s*:(.*)$/iu', $cleanRef, $mc)) {
+                    $xml .= "\t\t\t\t\t<comment>" . htmlspecialchars(trim($mc[1])) . "</comment>\r\n";
+                }
+
+                $xml .= "\t\t\t\t</element-citation>\r\n";
+                $xml .= "\t\t\t</ref>\r\n";
             }
         } else {
             $fallbackCount = (int)($meta['refCount'] ?? 1);
             if ($fallbackCount < 1) $fallbackCount = 1;
             for ($i = 1; $i <= $fallbackCount; $i++) {
-                $xml .= "      <ref id=\"B$i\">\n";
-                $xml .= "        <label>$i</label>\n";
-                $xml .= "        <element-citation publication-type=\"journal\">\n";
-                $xml .= "          <comment>[Completar referencia $i en formato JATS element-citation]</comment>\n";
-                $xml .= "        </element-citation>\n";
-                $xml .= "      </ref>\n";
+                $xml .= "\t\t\t<ref id=\"B$i\">\r\n";
+                $xml .= "\t\t\t\t<label>$i</label>\r\n";
+                $xml .= "\t\t\t\t<element-citation publication-type=\"journal\">\r\n";
+                $xml .= "\t\t\t\t\t<comment>[Completar referencia $i en formato JATS element-citation]</comment>\r\n";
+                $xml .= "\t\t\t\t</element-citation>\r\n";
+                $xml .= "\t\t\t</ref>\r\n";
             }
         }
-        $xml .= "    </ref-list>\n";
+        $xml .= "\t\t</ref-list>\r\n";
 
         if (!empty($meta['funding']) || !empty($meta['fundingStatement'])) {
-            /**
-             * NOTA DE FINANCIAMIENTO:
-             * Se coloca en el <back> como una nota al pie de tipo financial-disclosure.
-             */
-            $xml .= "    <fn-group>\n";
-            $xml .= "      <fn fn-type=\"financial-disclosure\" id=\"fn1\">\n";
-            $xml .= "        <label>Financiamiento</label>\n";
+            $xml .= "\t\t<fn-group>\r\n";
+            $xml .= "\t\t\t<fn fn-type=\"financial-disclosure\" id=\"fn1\">\r\n";
+            $xml .= "\t\t\t\t<label>Financiamiento</label>\r\n";
             $fundingText = $meta['fundingStatement'] ?: implode('; ', array_column($meta['funding'], 'source'));
-            $xml .= "        <p> " . htmlspecialchars($fundingText) . "</p>\n";
-            $xml .= "      </fn>\n";
-            $xml .= "    </fn-group>\n";
+            $xml .= "\t\t\t\t<p> " . htmlspecialchars($fundingText) . "</p>\r\n";
+            $xml .= "\t\t\t</fn>\r\n";
+            $xml .= "\t\t</fn-group>\r\n";
         }
 
-        $xml .= "  </back>\n";
+        $xml .= "\t</back>\r\n";
         return $xml;
     }
 
