@@ -126,21 +126,21 @@ class DocxParser
      */
     private function parseTableNode($tbl, $xpath)
     {
-        $xml = "<table-wrap>\n        <table>\n          <tbody>\n";
+        $xml = "<table-wrap>\r\n\t\t<table>\r\n\t\t\t<tbody>\r\n";
         foreach ($xpath->query('./w:tr', $tbl) as $tr) {
-            $xml .= "            <tr>\n";
+            $xml .= "\t\t\t\t<tr>\r\n";
             foreach ($xpath->query('./w:tc', $tr) as $tc) {
-                $xml .= "              <td>";
+                $xml .= "\t\t\t\t\t<td>";
                 $cellParas = [];
                 foreach ($xpath->query('./w:p', $tc) as $p) {
                     $cellParas[] = $this->parseParagraphNode($p, $xpath);
                 }
                 $xml .= implode('<br/>', array_filter($cellParas));
-                $xml .= "</td>\n";
+                $xml .= "</td>\r\n";
             }
-            $xml .= "            </tr>\n";
+            $xml .= "\t\t\t\t</tr>\r\n";
         }
-        $xml .= "          </tbody>\n        </table>\n      </table-wrap>";
+        $xml .= "\t\t\t</tbody>\r\n\t\t</table>\r\n\t</table-wrap>";
         return $xml;
     }
 
