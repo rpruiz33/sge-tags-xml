@@ -2282,9 +2282,18 @@ class DocxParser
                 $sourcePart = $parts[2] ?? '';
 
                 // Determinar tipo de publicación
-                $hasUrl  = (bool)preg_match('/https?:\\/\\//i', $cleanRef);
-                $hasDoi  = (bool)preg_match('/10\\.\\d{4,9}\\//u', $cleanRef);
-                $isWebpage = $hasUrl && !preg_match('/\\b(Revista|Journal|Annals|Interface|Saúde|Salud|Cuadernos|Trayectorias|Holos)\\b/iu', $cleanRef);
+                $hasUrl      = (bool)preg_match('/https?:\\/\\//i', $cleanRef);
+                $hasInternet = (bool)preg_match('/\[Internet\]/iu', $cleanRef);
+                $hasDoi      = (bool)preg_match('/10\\.\\d{4,9}\\//u', $cleanRef);
+                // Es webpage si tiene URL visible O lleva [Internet], salvo que sea claramente
+                // una revista académica (nombre de revista + indicios de publicación periódica).
+                // Palabras como "Saúde" o "Salud" aparecen también en documentos legales, por eso
+                // se exige que además haya señales de revista (DOI, vol/issue) para excluirla.
+                $looksLikeJournalRef = $hasDoi
+                    || preg_match('/\\b(?:vol|v\\.)\\s*\\d+/iu', $cleanRef)
+                    || preg_match('/\\d+\\([\\d\\-]+\\):/u', $cleanRef);
+                $isWebpage = ($hasUrl || $hasInternet)
+                    && !($looksLikeJournalRef && preg_match('/\\b(Revista|Journal|Annals|Interface|Saúde|Salud|Cuadernos|Trayectorias|Holos)\\b/iu', $cleanRef));
                 $isJournal = !$isWebpage && (
                     stripos($cleanRef, 'revista') !== false
                     || stripos($cleanRef, 'journal') !== false
@@ -2328,7 +2337,8 @@ class DocxParser
                             }
                             $xml .= "\t\t\t\t\t\t</name>\r\n";
                         }
-                        if ($hasEtal || count($authorsList) > 3) {
+                        // <etal/> solo cuando el texto original lo dice explícitamente.
+                        if ($hasEtal) {
                             $xml .= "\t\t\t\t\t\t<etal/>\r\n";
                         }
                         $xml .= "\t\t\t\t\t</person-group>\r\n";
@@ -2336,19 +2346,39 @@ class DocxParser
                 }
 
                 // Título / fuente
-                if ($titlePart) {
+                // Para webpages: extraer la fuente completa entre el autor y el año/[Internet]/URL.
+                // Para journals: usar la parte tras el segundo punto (nombre de revista).
+                // Para books: usar la parte tras el primer punto (título del libro).
+                if ($isWebpage) {
+                    // Fuente = título del documento: desde después del autor hasta [Internet].
+                    // Se limpia cualquier ciudad suelta que aparezca antes de [Internet].
+                    $sourceWebRaw = '';
+                    if (preg_match('/^[^.]+\.\s*(.+?)\s*(?:\[Internet\])/su', $cleanRef, $swm)) {
+                        // Quitar ciudad suelta al final (ej. ". Brasília" antes de [Internet])
+                        $sourceWebRaw = preg_replace('/\.\s*[A-ZÁÉÍÓÚ][a-záéíóúa-z]{2,30}\.?\s*$/u', '', trim($swm[1]));
+                        $sourceWebRaw = trim($sourceWebRaw, '. ');
+                    } elseif ($titlePart !== '') {
+                        $sourceWebRaw = $titlePart;
+                    }
+                    if ($sourceWebRaw !== '') {
+                        $xml .= "\t\t\t\t\t<source>" . htmlspecialchars($sourceWebRaw) . "</source>\r\n";
+                    }
+                } elseif ($titlePart) {
                     $tag = ($pubType === 'journal') ? 'article-title' : 'source';
                     $xml .= "\t\t\t\t\t<$tag>" . htmlspecialchars($titlePart) . "</$tag>\r\n";
                 }
 
                 if ($pubType === 'book') {
-                    // Publisher-loc: solo la ciudad (antes del ":"), publisher-name: solo la editorial
-                    if (preg_match('/:\s*([^;\n]+?)(?:;|$)/u', $cleanRef, $pm)) {
-                        // Buscar patrón "Ciudad: Editorial"
-                        if (preg_match('/([A-ZÁÉÍÓÚÑ][^:]{2,30}):\s*([^;\n.]{3,60}?)(?:[;.]|$)/u', $cleanRef, $pm2)) {
-                            $xml .= "\t\t\t\t\t<publisher-loc>" . htmlspecialchars(trim($pm2[1])) . "</publisher-loc>\r\n";
-                            $xml .= "\t\t\t\t\t<publisher-name>" . htmlspecialchars(trim($pm2[2])) . "</publisher-name>\r\n";
-                        }
+                    // Publisher-loc y publisher-name: buscar el patrón "Ciudad: Editorial" que aparece
+                    // DESPUÉS del título (típicamente al final de la referencia, antes del año y punto final).
+                    // El patrón correcto es una ciudad corta seguida de ": " y una editorial, terminando en ";".
+                    // Ej: "Madrid: Editorial Triacastela; 2011" -> loc=Madrid, name=Editorial Triacastela
+                    // Ej: "Firenze: Giunti Editore; 2010"       -> loc=Firenze,  name=Giunti Editore
+                    // Usamos la porción de texto después del último "." que antecede a la ciudad,
+                    // limitando la ciudad a 1-2 palabras sin ":" propio.
+                    if (preg_match('/\.\s*([A-ZÁÉÍÓÚÀÈÙÂÊÎÔÛÄËÏÖÜ][^:.]{1,30}?):\s*([^;.\d][^;.]{2,60}?)\s*;\s*\d{4}/u', $cleanRef, $pm2)) {
+                        $xml .= "\t\t\t\t\t<publisher-loc>" . htmlspecialchars(trim($pm2[1])) . "</publisher-loc>\r\n";
+                        $xml .= "\t\t\t\t\t<publisher-name>" . htmlspecialchars(trim($pm2[2])) . "</publisher-name>\r\n";
                     }
                     if (preg_match('/(\\d+)\\.?\\s*(?:ed|edition)\\b/iu', $cleanRef, $me)) {
                         $xml .= "\t\t\t\t\t<edition>" . htmlspecialchars($me[1]) . ". ed</edition>\r\n";
@@ -2514,6 +2544,15 @@ class DocxParser
         return preg_replace_callback('/(?<![\d\.\/\w])(\d{4,7})(?![\d\.\/\w])/u', function ($m) {
             $digits = $m[1];
             $len = strlen($digits);
+
+            // Proteger años (1900-2099) para que no se partan como páginas.
+            if ($len === 4) {
+                $asInt = (int)$digits;
+                if ($asInt >= 1900 && $asInt <= 2099) {
+                    return $digits;
+                }
+            }
+
             if ($len % 2 === 0) {
                 $half = $len / 2;
                 $a = substr($digits, 0, $half);
@@ -2561,8 +2600,20 @@ class DocxParser
             } elseif (preg_match('/^([\p{L}\p{M}\s\-\'\.]+\s+[\p{L}\p{M}\s\-\'\.]+)$/u', $p, $m)) { // Given Names Surname (simple case)
                 $tokens = preg_split('/\s+/u', $p);
                 if (count($tokens) > 1) {
-                    $surname = array_pop($tokens);
-                    $given = implode(' ', $tokens);
+                    // Detectar el formato "Apellido Inicial(es)" donde el último token son iniciales (1-3 letras, posiblemente con puntos).
+                    // Ej: "Maltoni M" -> surname=Maltoni, given=M
+                    // Ej: "Scremin Martins PP" -> surname=Scremin Martins, given=PP
+                    $lastToken = end($tokens);
+                    $isInitials = preg_match('/^[\p{Lu}]{1,3}\.?$/u', $lastToken);
+                    if ($isInitials) {
+                        // Formato: palabras + iniciales al final -> surname=todo menos último, given=último
+                        $given = array_pop($tokens);
+                        $surname = implode(' ', $tokens);
+                    } else {
+                        // Formato clásico: primer token(s) = nombre, último = apellido
+                        $surname = array_pop($tokens);
+                        $given = implode(' ', $tokens);
+                    }
                 } else {
                     $surname = $p;
                     $given = '';
@@ -2574,13 +2625,12 @@ class DocxParser
                 // Fallback for more complex cases or initials
                 $tokens = preg_split('/\s+/u', $p);
                 if (count($tokens) > 1) {
-                    // Heuristic: if last part is all caps or initials, it's likely given names.
-                    // Otherwise, assume last part is surname.
                     $lastToken = end($tokens);
-                    if (preg_match('/^[\p{L}\p{M}]{1,3}\.?$/u', $lastToken) && count($tokens) > 1) { // e.g., Eich M
-                        $surname = array_shift($tokens);
-                        $given = implode(' ', $tokens);
-                    } else { // e.g., M. Eich
+                    // Si el último token son iniciales (1-3 letras mayúsculas), es el "given" y lo anterior es el apellido.
+                    if (preg_match('/^[\p{Lu}]{1,3}\.?$/u', $lastToken)) { // e.g., "Eich M" o "Scremin Martins PP"
+                        $given = array_pop($tokens);
+                        $surname = implode(' ', $tokens);
+                    } else { // e.g., "M. Eich" -> given=M., surname=Eich
                         $surname = array_pop($tokens);
                         $given = implode(' ', $tokens);
                     }
