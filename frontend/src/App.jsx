@@ -1129,8 +1129,8 @@ function buildBackXml(meta) {
         back += `\t\t\t\t\t<${tag}>${e(titlePart)}</${tag}>\r\n`;
       }
 
-      // Journal Name (if journal) or Publisher Info (if book)
-      if (pubType === 'journal' && parts[2]) { // parts[2] might be the journal name
+      // Nombre de la revista (si es revista) o información del editor (si es libro)
+      if (pubType === 'journal' && parts[2]) { // parts[2] podría ser el nombre de la revista
           back += `\t\t\t\t\t<source>${e(parts[2])}</source>\r\n`;
       } else if (pubType === 'book') {
           // Try to find publisher info in parts[1], parts[2] or later
