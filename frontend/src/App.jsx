@@ -1063,7 +1063,7 @@ function buildJatsFromMeta(meta, referenceXml = '') {
   const body = buildBodyXml(meta);
   const back = buildBackXml(meta);
 
-  return `<?xml version="1.0" encoding="UTF-8"?>\r\n<!DOCTYPE article PUBLIC "-//NLM//DTD JATS (Z39.96) Journal Publishing DTD v1.1 20121330//EN"\r\n  "https://jats.nlm.nih.gov/publishing/1.1/JATS-journalpublishing1-1.dtd">\r\n<article dtd-version="1.1" article-type="research-article" specific-use="sps-1.9" xml:lang="${e(meta.lang || 'es')}" xmlns:xlink="http://www.w3.org/1999/xlink">\r\n\r\n\t<front>\r\n${journalMeta}\r\n\r\n${articleMeta}\t</front>\r\n\r\n${body}${back}</article>`;
+  return `<?xml version="1.0" encoding="utf-8"?>\r\n<!DOCTYPE article PUBLIC "-//NLM//DTD JATS (Z39.96) Journal Publishing DTD v1.1 20151215//EN"\r\n  "https://jats.nlm.nih.gov/publishing/1.1/JATS-journalpublishing1.dtd">\r\n<article article-type="research-article" dtd-version="1.1" specific-use="sps-1.9" xml:lang="${e(meta.lang || 'es')}" xmlns:mml="http://www.w3.org/1998/Math/MathML" xmlns:xlink="http://www.w3.org/1999/xlink">\r\n\r\n\t<front>\r\n${journalMeta}\r\n\r\n${articleMeta}\t</front>\r\n\r\n${body}${back}</article>`;
 }
 
 function buildBackXml(meta) {
