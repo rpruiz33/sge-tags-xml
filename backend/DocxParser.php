@@ -71,47 +71,62 @@ class DocxParser
 
         // Inicializa el arreglo $lines.
         $lines = [];
-        // Recorre $xpath->query('//w:p') para procesar cada elemento detectado.
-        foreach ($xpath->query('//w:p') as $p) {
-            // Inicializa el arreglo $segments.
-            $segments = [];
-            // Recorre $xpath->query('./w:r', $p) para procesar cada elemento detectado.
-            foreach ($xpath->query('./w:r', $p) as $r) {
-                // Inicializa el arreglo $texts.
-                $texts = [];
-                // Recorre $xpath->query('.//w:t', $r) para procesar cada elemento detectado.
-                foreach ($xpath->query('.//w:t', $r) as $t) {
-                    // Guarda este valor como nuevo elemento de $texts.
-                    $texts[] = $t->nodeValue;
+        // Recorre los hijos directos del body para mantener el orden de párrafos y tablas.
+        foreach ($xpath->query('//w:body/*') as $node) {
+            if ($node->nodeName === 'w:p') {
+                $line = $this->parseParagraphNode($node, $xpath);
+                if ($line !== '') {
+                    $lines[] = $line;
                 }
-                // Prepara $segment con el valor que se usará después.
-                $segment = implode('', $texts);
-                // Si el fragmento de texto viene vacío, descarta este caso y sigue leyendo.
-                if ($segment === '') {
-                    // Omite este caso y sigue con la siguiente línea del DOCX.
-                    continue;
+            } elseif ($node->nodeName === 'w:tbl') {
+                $tableXml = $this->parseTableNode($node, $xpath);
+                if ($tableXml !== '') {
+                    $lines[] = $tableXml;
                 }
-                // Prepara $isItalic con el valor que se usará después.
-                $isItalic = $xpath->query('./w:rPr/w:i | ./w:rPr/w:iCs', $r)->length > 0;
-                // Si Word marca ese fragmento como cursiva, prepara $segment con el valor que se usará dentro del bloque.
-                if ($isItalic) {
-                    // Prepara $segment con el valor que se usará después.
-                    $segment = '<italic>' . htmlspecialchars($segment, ENT_QUOTES | ENT_XML1, 'UTF-8') . '</italic>';
-                }
-                // Guarda este valor como nuevo elemento de $segments.
-                $segments[] = $segment;
-            }
-            // Limpia espacios sobrantes y deja el texto listo en $line.
-            $line = trim(implode('', $segments));
-            // Si la línea final tiene texto útil, agrega ese valor al arreglo $lines.
-            if ($line !== '') {
-                // Guarda este valor como nuevo elemento de $lines.
-                $lines[] = $line;
             }
         }
 
         // Devuelve el resultado final de esta parte del proceso.
         return $lines;
+    }
+
+    private function parseParagraphNode($p, $xpath)
+    {
+        $segments = [];
+        foreach ($xpath->query('./w:r', $p) as $r) {
+            $texts = [];
+            foreach ($xpath->query('.//w:t', $r) as $t) {
+                $texts[] = $t->nodeValue;
+            }
+            $segment = implode('', $texts);
+            if ($segment === '') continue;
+            $isItalic = $xpath->query('./w:rPr/w:i | ./w:rPr/w:iCs', $r)->length > 0;
+            if ($isItalic) {
+                $segment = '<italic>' . $segment . '</italic>';
+            }
+            $segments[] = $segment;
+        }
+        return trim(implode('', $segments));
+    }
+
+    private function parseTableNode($tbl, $xpath)
+    {
+        $xml = "<table-wrap>\n        <table>\n          <tbody>\n";
+        foreach ($xpath->query('./w:tr', $tbl) as $tr) {
+            $xml .= "            <tr>\n";
+            foreach ($xpath->query('./w:tc', $tr) as $tc) {
+                $xml .= "              <td>";
+                $cellParas = [];
+                foreach ($xpath->query('./w:p', $tc) as $p) {
+                    $cellParas[] = $this->parseParagraphNode($p, $xpath);
+                }
+                $xml .= implode('<br/>', array_filter($cellParas));
+                $xml .= "</td>\n";
+            }
+            $xml .= "            </tr>\n";
+        }
+        $xml .= "          </tbody>\n        </table>\n      </table-wrap>";
+        return $xml;
     }
 
     // Declara el método parseMetadata de la clase.
@@ -204,6 +219,8 @@ class DocxParser
             'conflict' => '',
             // Define el valor inicial del metadato "contributions".
             'contributions' => [],
+            // Define el valor inicial del metadato "references".
+            'references' => [],
             // Define el valor inicial del metadato "collectionYear".
             'collectionYear' => '',
             // Define el valor inicial del metadato "refCount".
@@ -1289,6 +1306,55 @@ class DocxParser
             }
         }
 
+        // Secciones: detección de títulos y captura de párrafos del cuerpo.
+        $standardSections = ['Introducción', 'Metodología', 'Métodos', 'Resultados', 'Discusión', 'Conclusiones', 'Introduction', 'Methods', 'Results', 'Discussion', 'Conclusions'];
+        $meta['bodySections'] = [];
+        $meta['sections'] = [];
+        $currentSec = null;
+        $inBody = false;
+
+        foreach ($rawClean as $line) {
+            $lineTrim = trim(strip_tags($line));
+            if ($lineTrim === '') continue;
+
+            $isTitle = false;
+            if (mb_strlen($lineTrim) < 60) {
+                foreach ($standardSections as $s) {
+                    if (strcasecmp($lineTrim, $s) === 0) {
+                        $isTitle = true;
+                        break;
+                    }
+                }
+            }
+
+            if ($isTitle) {
+                $inBody = true;
+                if ($currentSec) $meta['bodySections'][] = $currentSec;
+                $currentSec = ['title' => $lineTrim, 'paragraphs' => []];
+                $meta['sections'][] = $lineTrim;
+                continue;
+            }
+
+            // Si llegamos a Referencias, dejamos de capturar párrafos para el cuerpo
+            if (preg_match('/^(Referencias bibliogr(?:a?ficas)?|Referencias|References?)\b/i', $lineTrim)) {
+                $inBody = false;
+                if ($currentSec) {
+                    $meta['bodySections'][] = $currentSec;
+                    $currentSec = null;
+                }
+                continue;
+            }
+
+            if ($inBody && $currentSec) {
+                // Evitamos capturar líneas que parezcan metadatos sueltos (DOI, emails, etc.)
+                if (!preg_match('/^(10\.\d{4,9}\/|https?:\/\/orcid\.org\/|[\w.%-]+@[\w.-]+\.[A-Za-z]{2,})/iu', $lineTrim)) {
+                    $currentSec['paragraphs'][] = $line;
+                }
+            }
+        }
+        if ($currentSec) $meta['bodySections'][] = $currentSec;
+        $meta['sections'] = array_values(array_unique($meta['sections']));
+
         // Si el dato todavía está vacío, prepara $parts con el valor que se usará dentro del bloque.
         if (!empty($meta['accepted'])) {
             // Divide el texto en partes y las guarda en $parts.
@@ -1311,30 +1377,39 @@ class DocxParser
         // Cierra la función anónima usada dentro del array_map.
         }, $meta['kwdsEn'])));
 
-        // Conteo de referencias
-        // Inicializa $inRefs apagado hasta detectar el caso correspondiente.
+        // Conteo y extracción de texto de referencias
         $inRefs = false;
-        // Inicializa $refCount como contador o índice de control.
-        $refCount = 0;
-        // Recorre $clean para procesar cada elemento detectado.
-        foreach ($clean as $line) {
-            // Si encuentra el inicio de las referencias, activa la bandera $inRefs.
-            if (preg_match('/^(Referencias bibliogr(?:a?ficas)?|Referencias|References?)\b/i', $line)) {
-                // Prepara $inRefs con el valor que se usará después.
+        foreach ($rawClean as $line) {
+            $linePlain = trim(strip_tags($line));
+            if (preg_match('/^(Referencias bibliogr(?:a?ficas)?|Referencias|References?)\b/i', $linePlain)) {
                 $inRefs = true;
-                // Omite este caso y sigue con la siguiente línea del DOCX.
                 continue;
             }
-            // Si encuentra una referencia numerada, incrementa el contador $refCount.
-            if ($inRefs && preg_match('/^(?:\[\d+\]|\d+[\.\)])\s+/u', $line)) {
-                $refCount++;
+
+            if ($inRefs) {
+                // Si detectamos el inicio de metadatos editoriales finales o secciones posteriores, detenemos la extracción.
+                if (preg_match('/^(Recibido|Recebido|Received|Versi[oó]n|Revisado|Revised|Aprobado|Aceptado|Aceito|Accepted|Publicado|Publicaci[oó]n|Publication|Conflicto|Contribuci[óo]n)\s*:/iu', $linePlain)) {
+                    $inRefs = false;
+                    continue;
+                }
+                
+                // Limpiamos prefijos de numeración (ej: "[1] " o "1. ") para el contenido de la cita.
+                $refText = preg_replace('/^(?:\[\d+\]|\d+[\.\)])\s+/u', '', $line);
+                if (trim(strip_tags($refText)) !== '') {
+                    $meta['references'][] = $refText;
+                }
             }
         }
-        // Si hay referencias contadas, guarda ese valor en el metadato "refCount".
-        if ($refCount > 0) {
-            // Guarda en "refCount" el dato que se acaba de detectar o normalizar.
-            $meta['refCount'] = (string)$refCount;
+        $meta['refCount'] = (string)count($meta['references']);
+
+        // Conteo de tablas detectadas en las líneas extraídas.
+        $tableCount = 0;
+        foreach ($lines as $line) {
+            if (strpos($line, '<table-wrap>') !== false) {
+                $tableCount++;
+            }
         }
+        $meta['tableCount'] = (string)$tableCount;
 
         // Normalizar guion largo en resúmenes para alinear con el XML de referencia.
         // Guarda en "abstractEs" el dato que se acaba de detectar o normalizar.
@@ -1473,12 +1548,10 @@ class DocxParser
         // Prepara $journalMeta con el valor que se usará después.
         $journalMeta = $t2 . "<journal-meta>\n";
         // Agrega contenido al texto acumulado en $journalMeta.
-        $journalMeta .= $t3 . "<journal-id journal-id-type=\"nlm-ta\">" . $e($meta['journalAbbrev'] ?? $meta['journalTitle'] ?? '') . "</journal-id>\n";
+        $journalId = $meta['journalIdPublisher'] ?? strtolower($meta['journalAbbrev'] ?? 'scol');
+        $journalMeta .= $t3 . "<journal-id journal-id-type=\"nlm-ta\">" . $e($meta['journalAbbrev'] ?? '') . "</journal-id>\n";
+        $journalMeta .= $t3 . "<journal-id journal-id-type=\"publisher-id\">" . $e($journalId) . "</journal-id>\n";
         // Si el dato todavía está vacío, añade contenido al acumulador $journalMeta.
-        if (!empty($meta['journalIdPublisher'])) {
-            // Agrega contenido al texto acumulado en $journalMeta.
-            $journalMeta .= $t3 . "<journal-id journal-id-type=\"publisher-id\">" . $e($meta['journalIdPublisher']) . "</journal-id>\n";
-        }
         // Agrega contenido al texto acumulado en $journalMeta.
         $journalMeta .= $t3 . "<journal-title-group>\n";
         // Agrega contenido al texto acumulado en $journalMeta.
@@ -1901,8 +1974,9 @@ class DocxParser
         // Agrega contenido al texto acumulado en $articleMeta.
         $articleMeta .= $t2 . "</article-meta>\n";
 
-        // Prepara $xml con el valor que se usará después.
         $xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
+        $xml .= "<!DOCTYPE article PUBLIC \"-//NLM//DTD JATS (Z39.96) Journal Publishing DTD v1.1 20121330//EN\"\n";
+        $xml .= "  \"https://jats.nlm.nih.gov/publishing/1.1/JATS-journalpublishing1-1.dtd\">\n";
         // Agrega contenido al texto acumulado en $xml.
         $xml .= "<article xmlns:mml=\"http://www.w3.org/1998/Math/MathML\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" article-type=\"research-article\" dtd-version=\"1.1\" specific-use=\"sps-1.9\" xml:lang=\"" . $e($lang) . "\">\n";
         // Agrega contenido al texto acumulado en $xml.
@@ -1911,10 +1985,10 @@ class DocxParser
         $xml .= $journalMeta . "\n";
         // Agrega contenido al texto acumulado en $xml.
         $xml .= rtrim($articleMeta, "\n") . "\n" . $t1 . "</front>\n";
-        // Agrega contenido al texto acumulado en $xml.
-        $xml .= "<body>\n  <!-- contenido del cuerpo omitido -->\n</body>\n";
-        // Agrega contenido al texto acumulado en $xml.
-        $xml .= "<back>\n  <!-- referencias y notas omitidas -->\n</back>\n";
+
+        $xml .= $this->buildBodyXml($meta);
+        $xml .= $this->buildBackXml($meta);
+
         // Agrega contenido al texto acumulado en $xml.
         $xml .= "</article>\n";
 
@@ -1924,6 +1998,161 @@ class DocxParser
 
         // Devuelve el resultado final de esta parte del proceso.
         return $xml;
+    }
+
+    private function buildBodyXml(array $meta)
+    {
+        $sections = $meta['bodySections'] ?? [];
+        $xml = "\n  <body>\n";
+
+        if (empty($sections)) {
+            // Fallback: si no hay secciones con párrafos, intentar usar la lista simple de títulos
+            $simpleSections = $meta['sections'] ?? [];
+            if (empty($simpleSections)) {
+                $xml .= "    <sec sec-type=\"intro\">\n";
+                $xml .= "      <title>Introducción</title>\n";
+                $xml .= "      <p>[Completar con el contenido del manuscrito]</p>\n";
+                $xml .= "    </sec>\n";
+            } else {
+                foreach ($simpleSections as $title) {
+                    $type = $this->inferBodySecType($title);
+                    $xml .= "    <sec sec-type=\"" . htmlspecialchars($type) . "\">\n";
+                    $xml .= "      <title>" . htmlspecialchars($title) . "</title>\n";
+                    $xml .= "      <p>[Completar con el contenido del manuscrito]</p>\n";
+                    $xml .= "    </sec>\n";
+                }
+            }
+        } else {
+            foreach ($sections as $sec) {
+                $type = $this->inferBodySecType($sec['title']);
+                $xml .= "    <sec sec-type=\"" . htmlspecialchars($type) . "\">\n";
+                $xml .= "      <title>" . htmlspecialchars($sec['title']) . "</title>\n";
+                foreach ($sec['paragraphs'] as $para) {
+                    $xml .= $this->formatParagraphGranular($para);
+                }
+                $xml .= "    </sec>\n";
+            }
+        }
+        $xml .= "  </body>\n";
+        return $xml;
+    }
+
+    private function formatParagraphGranular($text)
+    {
+        if (strpos($text, '<table-wrap>') !== false) {
+            return "      " . $text . "\n";
+        }
+        // Detectar citas textuales (Blockquotes)
+        $isQuote = preg_match('/^“/u', trim(strip_tags($text)));
+        // Procesar cursivas y escapar XML
+        $content = $this->escapeXmlWithItalic($text);
+        // Detectar y formatear XREFs (Citas bibliográficas)
+        // Regex mejorada para capturar números tras letras o en corchetes, incluyendo rangos.
+        $re = '/(?<=\p{L})(\d+(?:[\d,\-\s]*\d+)?)(?=[\s\.\,])|\[([\d,\-\s]+)\]/u';
+        $content = preg_replace_callback($re, function($m) {
+            $val = str_replace(' ', '', !empty($m[2]) ? $m[2] : $m[1]);
+            $parts = explode(',', $val);
+            $processedIds = [];
+            foreach ($parts as $part) {
+                if (preg_match('/(\d+)[\-–](\d+)/u', $part, $rg)) {
+                    $start = (int)$rg[1];
+                    $end = (int)$rg[2];
+                    if ($start < $end && ($end - $start) < 20) {
+                        for ($i = $start; $i <= $end; $i++) $processedIds[] = (string)$i;
+                    } else { $processedIds[] = $part; }
+                } else { $processedIds[] = $part; }
+            }
+            $res = '';
+            $first = true;
+            foreach ($processedIds as $id) {
+                $id = trim($id);
+                if ($id === '' || !is_numeric($id)) continue;
+                if (!$first) $res .= '<sup>,</sup>';
+                $res .= '<xref ref-type="bibr" rid="B' . $id . '"><sup>' . $id . '</sup></xref>';
+                $first = false;
+            }
+            return $res;
+        }, $content);
+        if ($isQuote) {
+            return "      <disp-quote>\n        <p>" . $content . "</p>\n      </disp-quote>\n";
+        }
+        return "      <p>" . $content . "</p>\n";
+    }
+
+    private function buildBackXml(array $meta)
+    {
+        $xml = "\n  <back>\n";
+        $xml .= "    <ref-list>\n";
+        $xml .= "      <title>Referencias bibliográficas</title>\n";
+
+        $references = $meta['references'] ?? [];
+        $count = count($references);
+
+        if ($count > 0) {
+            foreach ($references as $i => $refText) {
+                $num = $i + 1;
+                
+                // Intento simple de granularidad en la referencia
+                $cleanRef = trim(strip_tags($refText));
+                $year = preg_match('/\b(19|20)\d{2}\b/', $cleanRef, $my) ? $my[0] : '';
+                $parts = explode('.', $cleanRef);
+                $authorPart = trim($parts[0] ?? '');
+                $titlePart = trim($parts[1] ?? '');
+
+                $xml .= "      <ref id=\"B$num\">\n";
+                $xml .= "        <label>$num</label>\n";
+                $xml .= "        <mixed-citation>" . $this->escapeXmlWithItalic($refText) . "</mixed-citation>\n";
+                $xml .= "        <element-citation publication-type=\"journal\">\n";
+                if ($authorPart) {
+                    $xml .= "          <person-group person-group-type=\"author\">\n";
+                    $xml .= "            <name><surname>" . htmlspecialchars($authorPart) . "</surname></name>\n";
+                    $xml .= "          </person-group>\n";
+                }
+                if ($titlePart) {
+                    $xml .= "          <article-title>" . htmlspecialchars($titlePart) . "</article-title>\n";
+                }
+                if ($year) {
+                    $xml .= "          <year>$year</year>\n";
+                }
+                $xml .= "        </element-citation>\n";
+                $xml .= "      </ref>\n";
+            }
+        } else {
+            $fallbackCount = (int)($meta['refCount'] ?? 1);
+            if ($fallbackCount < 1) $fallbackCount = 1;
+            for ($i = 1; $i <= $fallbackCount; $i++) {
+                $xml .= "      <ref id=\"B$i\">\n";
+                $xml .= "        <label>$i</label>\n";
+                $xml .= "        <element-citation publication-type=\"journal\">\n";
+                $xml .= "          <comment>[Completar referencia $i en formato JATS element-citation]</comment>\n";
+                $xml .= "        </element-citation>\n";
+                $xml .= "      </ref>\n";
+            }
+        }
+        $xml .= "    </ref-list>\n";
+
+        if (!empty($meta['funding']) || !empty($meta['fundingStatement'])) {
+            $xml .= "    <fn-group>\n";
+            $xml .= "      <fn fn-type=\"financial-disclosure\" id=\"fn1\">\n";
+            $xml .= "        <label>Financiamiento</label>\n";
+            $fundingText = $meta['fundingStatement'] ?: implode('; ', array_column($meta['funding'], 'source'));
+            $xml .= "        <p> " . htmlspecialchars($fundingText) . "</p>\n";
+            $xml .= "      </fn>\n";
+            $xml .= "    </fn-group>\n";
+        }
+
+        $xml .= "  </back>\n";
+        return $xml;
+    }
+
+    private function inferBodySecType($title)
+    {
+        $normalized = mb_strtolower(trim((string)$title));
+        if (preg_match('/introducci[oó]n|introduction/u', $normalized)) return 'intro';
+        if (preg_match('/metodolog[ií]a|m[eé]todos|methods/u', $normalized)) return 'methods';
+        if (preg_match('/resultado|results?|discusi[oó]n|discussion/u', $normalized)) return 'results|discussion';
+        if (preg_match('/conclus/u', $normalized)) return 'conclusions';
+        return 'sec';
     }
 
     // Declara el método escapeXmlWithItalic de la clase.
