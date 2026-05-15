@@ -68,7 +68,11 @@ class DocxParser
         $xpath = new DOMXPath($dom);
         // Registra el namespace de Word para que las búsquedas XPath encuentren párrafos y runs.
         $xpath->registerNamespace('w', 'http://schemas.openxmlformats.org/wordprocessingml/2006/main');
-
+        
+        /**
+         * RECORRIDO SECUENCIAL:
+         * Recorremos los hijos directos del body para mantener el orden exacto del manuscrito.
+         */
         // Inicializa el arreglo $lines.
         $lines = [];
         // Recorre los hijos directos del body para mantener el orden de párrafos y tablas.
@@ -90,6 +94,12 @@ class DocxParser
         return $lines;
     }
 
+    /**
+     * PARSEO DE PÁRRAFOS:
+     * Extrae el texto de un nodo w:p. 
+     * Identifica los "runs" (w:r) que tienen propiedades de cursiva (w:i) 
+     * y los envuelve preventivamente en etiquetas <italic> para JATS.
+     */
     private function parseParagraphNode($p, $xpath)
     {
         $segments = [];
@@ -109,6 +119,11 @@ class DocxParser
         return trim(implode('', $segments));
     }
 
+    /**
+     * CONVERSIÓN DE TABLAS:
+     * Transforma una estructura w:tbl de Word a un bloque <table-wrap> compatible con JATS.
+     * Maneja múltiples párrafos dentro de una celda usando <br/> como separador visual.
+     */
     private function parseTableNode($tbl, $xpath)
     {
         $xml = "<table-wrap>\n        <table>\n          <tbody>\n";
@@ -1306,6 +1321,11 @@ class DocxParser
             }
         }
 
+        /**
+         * SEGMENTACIÓN DEL CUERPO (BODY SECTIONS):
+         * Implementa una lógica de "chunking" donde se detectan títulos estándar.
+         * Todo el contenido entre dos títulos se agrupa como párrafos de esa sección.
+         */
         // Secciones: detección de títulos y captura de párrafos del cuerpo.
         $standardSections = ['Introducción', 'Metodología', 'Métodos', 'Resultados', 'Discusión', 'Conclusiones', 'Introduction', 'Methods', 'Results', 'Discussion', 'Conclusions'];
         $meta['bodySections'] = [];
@@ -1346,7 +1366,10 @@ class DocxParser
             }
 
             if ($inBody && $currentSec) {
-                // Evitamos capturar líneas que parezcan metadatos sueltos (DOI, emails, etc.)
+                /**
+                 * FILTRADO DE RUIDO:
+                 * Evitamos capturar líneas que parezcan metadatos sueltos (DOI, ORCID, emails) dentro del cuerpo.
+                 */
                 if (!preg_match('/^(10\.\d{4,9}\/|https?:\/\/orcid\.org\/|[\w.%-]+@[\w.-]+\.[A-Za-z]{2,})/iu', $lineTrim)) {
                     $currentSec['paragraphs'][] = $line;
                 }
@@ -1378,6 +1401,12 @@ class DocxParser
         }, $meta['kwdsEn'])));
 
         // Conteo y extracción de texto de referencias
+        /**
+         * EXTRACCIÓN DE BIBLIOGRAFÍA:
+         * Localiza la sección de referencias y captura cada entrada.
+         * Se detiene automáticamente al detectar metadatos editoriales finales (Recibido, Aceptado, etc.)
+         * para evitar "ruido" en la lista de citas.
+         */
         $inRefs = false;
         foreach ($rawClean as $line) {
             $linePlain = trim(strip_tags($line));
@@ -1515,6 +1544,10 @@ class DocxParser
         return $meta;
     }
 
+    /**
+     * GENERADOR JATS XML:
+     * Ensambla el documento final siguiendo el estándar SPS 1.9.
+     */
     // Declara el método buildJatsXml de la clase.
     public function buildJatsXml(array $meta)
     // Abre un nuevo bloque de código.
@@ -2000,6 +2033,10 @@ class DocxParser
         return $xml;
     }
 
+    /**
+     * CONSTRUCCIÓN DEL <body>:
+     * Genera las etiquetas <sec> de forma dinámica basándose en lo extraído del DOCX.
+     */
     private function buildBodyXml(array $meta)
     {
         $sections = $meta['bodySections'] ?? [];
@@ -2037,6 +2074,13 @@ class DocxParser
         return $xml;
     }
 
+    /**
+     * FORMATEO GRANULAR DE PÁRRAFOS:
+     * 1. Detecta bloques de cita (disp-quote) si el texto inicia con comillas latinas.
+     * 2. Procesa citas bibliográficas (XREFs):
+     *    - Soporta formatos Vancouver: Texto1,2 o [1-3].
+     *    - EXPANSIÓN DE RANGOS: Convierte [1-3] en referencias individuales B1, B2, B3 con separadores.
+     */
     private function formatParagraphGranular($text)
     {
         if (strpos($text, '<table-wrap>') !== false) {
@@ -2047,12 +2091,14 @@ class DocxParser
         // Procesar cursivas y escapar XML
         $content = $this->escapeXmlWithItalic($text);
         // Detectar y formatear XREFs (Citas bibliográficas)
-        // Regex mejorada para capturar números tras letras o en corchetes, incluyendo rangos.
+        // Esta Regex busca números después de una letra (estilo Vancouver pegado) o números dentro de corchetes.
         $re = '/(?<=\p{L})(\d+(?:[\d,\-\s]*\d+)?)(?=[\s\.\,])|\[([\d,\-\s]+)\]/u';
         $content = preg_replace_callback($re, function($m) {
             $val = str_replace(' ', '', !empty($m[2]) ? $m[2] : $m[1]);
             $parts = explode(',', $val);
             $processedIds = [];
+            
+            // Lógica de expansión de guiones (rangos numéricos)
             foreach ($parts as $part) {
                 if (preg_match('/(\d+)[\-–](\d+)/u', $part, $rg)) {
                     $start = (int)$rg[1];
@@ -2062,6 +2108,7 @@ class DocxParser
                     } else { $processedIds[] = $part; }
                 } else { $processedIds[] = $part; }
             }
+            
             $res = '';
             $first = true;
             foreach ($processedIds as $id) {
@@ -2079,6 +2126,11 @@ class DocxParser
         return "      <p>" . $content . "</p>\n";
     }
 
+    /**
+     * CONSTRUCCIÓN DEL <back>:
+     * Genera la lista de referencias estructurada.
+     * Intenta descomponer la cita en autor, título y año para mayor granularidad semántica.
+     */
     private function buildBackXml(array $meta)
     {
         $xml = "\n  <back>\n";
@@ -2095,6 +2147,7 @@ class DocxParser
                 // Intento simple de granularidad en la referencia
                 $cleanRef = trim(strip_tags($refText));
                 $year = preg_match('/\b(19|20)\d{2}\b/', $cleanRef, $my) ? $my[0] : '';
+                // Split por punto para separar autor de título tentativamente
                 $parts = explode('.', $cleanRef);
                 $authorPart = trim($parts[0] ?? '');
                 $titlePart = trim($parts[1] ?? '');
@@ -2132,6 +2185,10 @@ class DocxParser
         $xml .= "    </ref-list>\n";
 
         if (!empty($meta['funding']) || !empty($meta['fundingStatement'])) {
+            /**
+             * NOTA DE FINANCIAMIENTO:
+             * Se coloca en el <back> como una nota al pie de tipo financial-disclosure.
+             */
             $xml .= "    <fn-group>\n";
             $xml .= "      <fn fn-type=\"financial-disclosure\" id=\"fn1\">\n";
             $xml .= "        <label>Financiamiento</label>\n";
@@ -2145,6 +2202,10 @@ class DocxParser
         return $xml;
     }
 
+    /**
+     * INFERENCIA DE TIPOS DE SECCIÓN:
+     * Mapea títulos de texto a tipos normalizados de JATS (intro, methods, etc.)
+     */
     private function inferBodySecType($title)
     {
         $normalized = mb_strtolower(trim((string)$title));
@@ -2155,6 +2216,11 @@ class DocxParser
         return 'sec';
     }
 
+    /**
+     * ESCAPE SEGURO CON CURSIVAS:
+     * Escapa caracteres especiales de XML (&, <, >) pero respeta las etiquetas <italic> 
+     * generadas durante la extracción para no romper el marcado.
+     */
     // Declara el método escapeXmlWithItalic de la clase.
     private function escapeXmlWithItalic($text)
     // Abre un nuevo bloque de código.
