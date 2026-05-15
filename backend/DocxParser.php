@@ -1431,6 +1431,14 @@ class DocxParser
         }
         $meta['refCount'] = (string)count($meta['references']);
 
+        // Normalizar posibles números de página concatenados sin guion
+        // Ej: "583592" -> "583-592" para facilitar extracción de fpage/lpage
+        if (!empty($meta['references'])) {
+            foreach ($meta['references'] as $ri => $rtext) {
+                $meta['references'][$ri] = $this->normalizeReferencePagesString($rtext);
+            }
+        }
+
         // Conteo de tablas detectadas en las líneas extraídas.
         $tableCount = 0;
         foreach ($lines as $line) {
@@ -2007,15 +2015,15 @@ class DocxParser
         // Agrega contenido al texto acumulado en $articleMeta.
         $articleMeta .= $t2 . "</article-meta>\n";
 
-        $xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-        $xml .= "<!DOCTYPE article PUBLIC \"-//NLM//DTD JATS (Z39.96) Journal Publishing DTD v1.1 20121330//EN\"\n";
-        $xml .= "  \"https://jats.nlm.nih.gov/publishing/1.1/JATS-journalpublishing1-1.dtd\">\n";
+        $xml = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\r\n";
+        $xml .= "<!DOCTYPE article\r\n";
+        $xml .= "  PUBLIC \"-//NLM//DTD JATS (Z39.96) Journal Publishing DTD v1.1 20151215//EN\" \"https://jats.nlm.nih.gov/publishing/1.1/JATS-journalpublishing1.dtd\">\r\n";
         // Agrega contenido al texto acumulado en $xml.
-        $xml .= "<article xmlns:mml=\"http://www.w3.org/1998/Math/MathML\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" article-type=\"research-article\" dtd-version=\"1.1\" specific-use=\"sps-1.9\" xml:lang=\"" . $e($lang) . "\">\n";
+        $xml .= "<article article-type=\"research-article\" dtd-version=\"1.1\" specific-use=\"sps-1.9\" xml:lang=\"" . $e($lang) . "\" xmlns:mml=\"http://www.w3.org/1998/Math/MathML\" xmlns:xlink=\"http://www.w3.org/1999/xlink\">\r\n";
         // Agrega contenido al texto acumulado en $xml.
         $xml .= "<front>\n";
         // Agrega contenido al texto acumulado en $xml.
-        $xml .= $journalMeta . "\n";
+        $xml .= $journalMeta . "\r\n";
         // Se asegura el uso de CRLF y tabs para cerrar el front
         $xml .= rtrim($articleMeta, "\r\n") . "\r\n" . $t1 . "</front>\r\n";
 
@@ -2023,7 +2031,7 @@ class DocxParser
         $xml .= $this->buildBackXml($meta);
 
         // Agrega contenido al texto acumulado en $xml.
-        $xml .= "</article>\r\n";
+        $xml .= "</article>\r\n"; // Ensure CRLF
 
         // Evita líneas en blanco extra antes del cierre de <front>.
         // Normaliza el texto con una expresión regular y lo guarda en $xml.
@@ -2036,41 +2044,147 @@ class DocxParser
     /**
      * CONSTRUCCIÓN DEL <body>:
      * Genera las etiquetas <sec> de forma dinámica basándose en lo extraído del DOCX.
+     * Estructura esperada JATS/SPS:
+     *  - <sec sec-type="intro">
+     *  - <sec sec-type="methods">
+     *  - <sec sec-type="results|discussion">  ← con sub-secciones <sec> hijas
+     *  - <sec sec-type="conclusions">
      */
     private function buildBodyXml(array $meta)
     {
         $sections = $meta['bodySections'] ?? [];
-        $xml = "\n  <body>\n";
+        $xml = "\t<body>\r\n";
+
+        // Títulos que van como sub-secciones dentro de results|discussion
+        $resultsDiscussionTitles = [
+            'resultado y discusiones', 'resultados y discusión', 'resultados',
+            'discusión', 'results', 'discussion', 'results and discussion',
+            'cuidados paliativos: sentidos y atribuciones',
+            'instrumentos y mecanismos de acción para la inversión de las directivas anticipadas de voluntad',
+        ];
+        // Títulos de conclusión que generan su propia <sec>
+        $conclusionTitles = ['consideraciones finales', 'conclusiones', 'conclusions', 'conclusión'];
 
         if (empty($sections)) {
-            // Fallback: si no hay secciones con párrafos, intentar usar la lista simple de títulos
             $simpleSections = $meta['sections'] ?? [];
             if (empty($simpleSections)) {
-                $xml .= "    <sec sec-type=\"intro\">\n";
-                $xml .= "      <title>Introducción</title>\n";
-                $xml .= "      <p>[Completar con el contenido del manuscrito]</p>\n";
-                $xml .= "    </sec>\n";
+                $xml .= "\t\t<sec sec-type=\"intro\">\r\n";
+                $xml .= "\t\t\t<title>Introducción</title>\r\n";
+                $xml .= "\t\t\t<p>[Completar con el contenido del manuscrito]</p>\r\n";
+                $xml .= "\t\t</sec>\r\n";
             } else {
                 foreach ($simpleSections as $title) {
                     $type = $this->inferBodySecType($title);
-                    $xml .= "    <sec sec-type=\"" . htmlspecialchars($type) . "\">\n";
-                    $xml .= "      <title>" . htmlspecialchars($title) . "</title>\n";
-                    $xml .= "      <p>[Completar con el contenido del manuscrito]</p>\n";
-                    $xml .= "    </sec>\n";
+                    $xml .= "\t\t<sec sec-type=\"" . htmlspecialchars($type) . "\">\r\n";
+                    $xml .= "\t\t\t<title>" . htmlspecialchars($title) . "</title>\r\n";
+                    $xml .= "\t\t\t<p>[Completar con el contenido del manuscrito]</p>\r\n";
+                    $xml .= "\t\t</sec>\r\n";
                 }
             }
         } else {
+            // Agrupar secciones: intro, methods, luego results|discussion (con sub-secs), luego conclusions
+            $grouped = [
+                'intro'            => [],
+                'methods'          => [],
+                'results_children' => [],  // sub-secciones dentro de results|discussion
+                'conclusions'      => [],
+                'other'            => [],
+            ];
+
             foreach ($sections as $sec) {
-                $type = $this->inferBodySecType($sec['title']);
-                $xml .= "    <sec sec-type=\"" . htmlspecialchars($type) . "\">\n";
-                $xml .= "      <title>" . htmlspecialchars($sec['title']) . "</title>\n";
-                foreach ($sec['paragraphs'] as $para) {
-                    $xml .= $this->formatParagraphGranular($para);
+                $normalized = mb_strtolower(trim($sec['title']));
+                if (preg_match('/introducci[oó]n|introduction/u', $normalized)) {
+                    $grouped['intro'][] = $sec;
+                } elseif (preg_match('/metodolog[ií]a|m[eé]todos|methods/u', $normalized)) {
+                    $grouped['methods'][] = $sec;
+                } elseif (in_array($normalized, $conclusionTitles, true) || preg_match('/conclus|consideraciones finales/u', $normalized)) {
+                    $grouped['conclusions'][] = $sec;
+                } elseif (in_array($normalized, $resultsDiscussionTitles, true)
+                    || preg_match('/resultado|discusi[oó]n|results?|discussion/u', $normalized)
+                    || preg_match('/cuidados paliativos|instrumentos y mecanismos/u', $normalized)
+                ) {
+                    $grouped['results_children'][] = $sec;
+                } else {
+                    $grouped['other'][] = $sec;
                 }
-                $xml .= "    </sec>\n";
+            }
+
+            // Intro
+            foreach ($grouped['intro'] as $sec) {
+                $xml .= "\t\t<sec sec-type=\"intro\">\r\n";
+                $xml .= "\t\t\t<title>" . htmlspecialchars($sec['title']) . "</title>\r\n";
+                foreach ($sec['paragraphs'] as $para) {
+                    $xml .= $this->formatParagraphGranular($para, "\t\t\t");
+                }
+                $xml .= "\t\t</sec>\r\n";
+            }
+
+            // Methods
+            foreach ($grouped['methods'] as $sec) {
+                $xml .= "\t\t<sec sec-type=\"methods\">\r\n";
+                $xml .= "\t\t\t<title>" . htmlspecialchars($sec['title']) . "</title>\r\n";
+                foreach ($sec['paragraphs'] as $para) {
+                    $xml .= $this->formatParagraphGranular($para, "\t\t\t");
+                }
+                $xml .= "\t\t</sec>\r\n";
+            }
+
+            // Results|Discussion con sub-secciones hijas
+            if (!empty($grouped['results_children'])) {
+                // La primera entrada puede ser la sección padre (ej. "Resultado y discusiones")
+                // Las demás son sub-secciones (ej. "Cuidados paliativos...", "Instrumentos...")
+                $firstSec = $grouped['results_children'][0];
+                $firstNorm = mb_strtolower(trim($firstSec['title']));
+                $isParent = preg_match('/resultado|discusi[oó]n|results?|discussion/u', $firstNorm);
+
+                $xml .= "\t\t<sec sec-type=\"results|discussion\">\r\n";
+                if ($isParent) {
+                    $xml .= "\t\t\t<title>" . htmlspecialchars($firstSec['title']) . "</title>\r\n";
+                    // Párrafos del padre (si los hubiera)
+                    foreach ($firstSec['paragraphs'] as $para) {
+                        $xml .= $this->formatParagraphGranular($para, "\t\t\t");
+                    }
+                    // Sub-secciones
+                    $children = array_slice($grouped['results_children'], 1);
+                } else {
+                    // No hay sección padre explícita — todas son hijas
+                    $xml .= "\t\t\t<title>Resultado y discusiones</title>\r\n";
+                    $children = $grouped['results_children'];
+                }
+
+                foreach ($children as $child) {
+                    $xml .= "\t\t\t<sec>\r\n";
+                    $xml .= "\t\t\t\t<title>" . htmlspecialchars($child['title']) . "</title>\r\n";
+                    foreach ($child['paragraphs'] as $para) {
+                        $xml .= $this->formatParagraphGranular($para, "\t\t\t\t");
+                    }
+                    $xml .= "\t\t\t</sec>\r\n";
+                }
+                $xml .= "\t\t</sec>\r\n";
+            }
+
+            // Conclusions
+            foreach ($grouped['conclusions'] as $sec) {
+                $xml .= "\t\t<sec sec-type=\"conclusions\">\r\n";
+                $xml .= "\t\t\t<title>" . htmlspecialchars($sec['title']) . "</title>\r\n";
+                foreach ($sec['paragraphs'] as $para) {
+                    $xml .= $this->formatParagraphGranular($para, "\t\t\t");
+                }
+                $xml .= "\t\t</sec>\r\n";
+            }
+
+            // Other (secciones no categorizadas)
+            foreach ($grouped['other'] as $sec) {
+                $type = $this->inferBodySecType($sec['title']);
+                $xml .= "\t\t<sec sec-type=\"" . htmlspecialchars($type) . "\">\r\n";
+                $xml .= "\t\t\t<title>" . htmlspecialchars($sec['title']) . "</title>\r\n";
+                foreach ($sec['paragraphs'] as $para) {
+                    $xml .= $this->formatParagraphGranular($para, "\t\t\t");
+                }
+                $xml .= "\t\t</sec>\r\n";
             }
         }
-        $xml .= "  </body>\n";
+        $xml .= "\t</body>\r\n";
         return $xml;
     }
 
@@ -2081,10 +2195,10 @@ class DocxParser
      *    - Soporta formatos Vancouver: Texto1,2 o [1-3].
      *    - EXPANSIÓN DE RANGOS: Convierte [1-3] en referencias individuales B1, B2, B3 con separadores.
      */
-    private function formatParagraphGranular($text)
+    private function formatParagraphGranular($text, $indent = "\t\t\t")
     {
         if (strpos($text, '<table-wrap>') !== false) {
-            return "      " . $text . "\n";
+            return $indent . $text . "\r\n";
         }
         // Detectar citas textuales (Blockquotes)
         $isQuote = preg_match('/^“/u', trim(strip_tags($text)));
@@ -2120,16 +2234,32 @@ class DocxParser
             }
             return $res;
         }, $content);
-        if ($isQuote) {
-            return "      <disp-quote>\n        <p>" . $content . "</p>\n      </disp-quote>\n";
+        // Filtrar líneas que pertenecen al <back>, no al <body>
+        $plain = trim(strip_tags($text));
+        if (preg_match('/^(Financiamiento|Conflicto de Intereses|Contribuci[óo]n autoral)\s*$/iu', $plain)) {
+            return '';
         }
-        return "      <p>" . $content . "</p>\n";
+        if ($isQuote) {
+            return $indent . "<disp-quote>\r\n"
+                 . $indent . "\t<p>" . $content . "</p>\r\n"
+                 . $indent . "</disp-quote>\r\n";
+        }
+        return $indent . "<p>" . $content . "</p>\r\n";
     }
 
     /**
      * CONSTRUCCIÓN DEL <back>:
      * Genera la lista de referencias estructurada.
      * Intenta descomponer la cita en autor, título y año para mayor granularidad semántica.
+     */
+    /**
+     * CONSTRUCCIÓN DEL <back>:
+     * Genera la lista de referencias estructurada con element-citation correcto:
+     * - mixed-citation numerada ("N. Autor...")
+     * - Tipo de publicación: journal / book / webpage según la referencia
+     * - Entidades corporativas con <collab> (no <name>)
+     * - Publisher-loc y publisher-name limpios (sólo ciudad / editorial)
+     * - Referencias web con publication-type="webpage", date-in-citation iso-8601, <comment> con URL
      */
     private function buildBackXml(array $meta)
     {
@@ -2143,98 +2273,150 @@ class DocxParser
         if ($count > 0) {
             foreach ($references as $i => $refText) {
                 $num = $i + 1;
-                
+
                 $cleanRef = trim(strip_tags($refText));
-                $year = preg_match('/\b(19|20)\d{2}\b/', $cleanRef, $my) ? $my[0] : '';
+                $year = preg_match('/\\b(19|20)\\d{2}\\b/', $cleanRef, $my) ? $my[0] : '';
                 $parts = array_map('trim', explode('.', $cleanRef));
                 $authorPart = $parts[0] ?? '';
-                $titlePart = $parts[1] ?? '';
+                $titlePart  = $parts[1] ?? '';
                 $sourcePart = $parts[2] ?? '';
+
+                // Determinar tipo de publicación
+                $hasUrl  = (bool)preg_match('/https?:\\/\\//i', $cleanRef);
+                $hasDoi  = (bool)preg_match('/10\\.\\d{4,9}\\//u', $cleanRef);
+                $isWebpage = $hasUrl && !preg_match('/\\b(Revista|Journal|Annals|Interface|Saúde|Salud|Cuadernos|Trayectorias|Holos)\\b/iu', $cleanRef);
+                $isJournal = !$isWebpage && (
+                    stripos($cleanRef, 'revista') !== false
+                    || stripos($cleanRef, 'journal') !== false
+                    || stripos($cleanRef, 'vol.') !== false
+                    || preg_match('/\\b(?:vol|v\\.)\\s*\\d+/iu', $cleanRef)
+                    || preg_match('/\\d+\\(([\\d\\-]+)\\):/', $cleanRef)
+                    || $hasDoi
+                );
+                if ($isWebpage) {
+                    $pubType = 'webpage';
+                } elseif ($isJournal) {
+                    $pubType = 'journal';
+                } else {
+                    $pubType = 'book';
+                }
 
                 $xml .= "\t\t\t<ref id=\"B$num\">\r\n";
                 $xml .= "\t\t\t\t<label>$num</label>\r\n";
-                $xml .= "\t\t\t\t<mixed-citation>" . $this->escapeXmlWithItalic($refText) . "</mixed-citation>\r\n";
-                
-                $isJournal = (stripos($cleanRef, 'revista') !== false || stripos($cleanRef, 'vol.') !== false || preg_match('/\d+\(([\d\-]+)\):/', $cleanRef));
-                $pubType = $isJournal ? 'journal' : 'book';
-                
+                // mixed-citation numerada, como en el XML de referencia
+                $xml .= "\t\t\t\t<mixed-citation>$num. " . $this->escapeXmlWithItalic($cleanRef) . "</mixed-citation>\r\n";
+
                 $xml .= "\t\t\t\t<element-citation publication-type=\"$pubType\">\r\n";
-                
+
+                // Autores / entidad corporativa
                 if ($authorPart) {
-                    $isCollab = preg_match('/\b(Organiza|Ministerio|Conselho|Universida|Fundaç|World Health|WHO|PAHO|UNESCO|United Nations|Comisión|Committee)\b/iu', $authorPart);
+                    $isCollab = preg_match('/\\b(Organiza|Ministerio|Minist[eé]rio|Conselho|Consejo|Brasil|Colombia|Universida|Fundaç|Comiss[aã]o|Comisi[oó]n|World Health|WHO|PAHO|UNESCO|United Nations|Committee)\\b/iu', $authorPart);
                     if ($isCollab) {
-                        $xml .= "\t\t\t\t\t<collab>" . htmlspecialchars($authorPart) . "</collab>\r\n";
+                        $xml .= "\t\t\t\t\t<person-group person-group-type=\"author\">\r\n";
+                        $xml .= "\t\t\t\t\t\t<collab>" . htmlspecialchars(trim($authorPart)) . "</collab>\r\n";
+                        $xml .= "\t\t\t\t\t</person-group>\r\n";
                     } else {
                         $xml .= "\t\t\t\t\t<person-group person-group-type=\"author\">\r\n";
-                        $xml .= "\t\t\t\t\t\t<name>\r\n";
-                        $nameParts = preg_split('/\s+/', trim(preg_replace('/et al\b/i', '', $authorPart)), -1, PREG_SPLIT_NO_EMPTY);
-                        $surname = array_shift($nameParts);
-                        $xml .= "\t\t\t\t\t\t\t<surname>" . htmlspecialchars($surname) . "</surname>\r\n";
-                        if ($nameParts) $xml .= "\t\t\t\t\t\t\t<given-names>" . htmlspecialchars(implode(' ', $nameParts)) . "</given-names>\r\n";
-                        $xml .= "\t\t\t\t\t\t</name>\r\n";
-                        if (preg_match('/et al\b/i', $authorPart)) {
+                        $parsed     = $this->parseAuthorList($authorPart);
+                        $authorsList = $parsed['authors'] ?? [];
+                        $hasEtal     = $parsed['etal']    ?? false;
+                        foreach ($authorsList as $an) {
+                            $xml .= "\t\t\t\t\t\t<name>\r\n";
+                            $xml .= "\t\t\t\t\t\t\t<surname>"     . htmlspecialchars($an['surname']) . "</surname>\r\n";
+                            if ($an['given'] !== '') {
+                                $xml .= "\t\t\t\t\t\t\t<given-names>" . htmlspecialchars($an['given'])   . "</given-names>\r\n";
+                            }
+                            $xml .= "\t\t\t\t\t\t</name>\r\n";
+                        }
+                        if ($hasEtal || count($authorsList) > 3) {
                             $xml .= "\t\t\t\t\t\t<etal/>\r\n";
                         }
                         $xml .= "\t\t\t\t\t</person-group>\r\n";
                     }
                 }
 
+                // Título / fuente
                 if ($titlePart) {
                     $tag = ($pubType === 'journal') ? 'article-title' : 'source';
                     $xml .= "\t\t\t\t\t<$tag>" . htmlspecialchars($titlePart) . "</$tag>\r\n";
                 }
 
                 if ($pubType === 'book') {
-                    if ($sourcePart && strpos($sourcePart, ':') !== false) {
-                        $bits = explode(':', $sourcePart, 2);
-                        $xml .= "\t\t\t\t\t<publisher-loc>" . htmlspecialchars(trim($bits[0])) . "</publisher-loc>\r\n";
-                        $xml .= "\t\t\t\t\t<publisher-name>" . htmlspecialchars(trim(explode(';', $bits[1])[0])) . "</publisher-name>\r\n";
+                    // Publisher-loc: solo la ciudad (antes del ":"), publisher-name: solo la editorial
+                    if (preg_match('/:\s*([^;\n]+?)(?:;|$)/u', $cleanRef, $pm)) {
+                        // Buscar patrón "Ciudad: Editorial"
+                        if (preg_match('/([A-ZÁÉÍÓÚÑ][^:]{2,30}):\s*([^;\n.]{3,60}?)(?:[;.]|$)/u', $cleanRef, $pm2)) {
+                            $xml .= "\t\t\t\t\t<publisher-loc>" . htmlspecialchars(trim($pm2[1])) . "</publisher-loc>\r\n";
+                            $xml .= "\t\t\t\t\t<publisher-name>" . htmlspecialchars(trim($pm2[2])) . "</publisher-name>\r\n";
+                        }
                     }
-                    if (preg_match('/(\d+)\.?\s*(?:ed|edition)\b/iu', $cleanRef, $me)) {
-                        $xml .= "\t\t\t\t\t<edition>" . htmlspecialchars($me[1]) . "</edition>\r\n";
+                    if (preg_match('/(\\d+)\\.?\\s*(?:ed|edition)\\b/iu', $cleanRef, $me)) {
+                        $xml .= "\t\t\t\t\t<edition>" . htmlspecialchars($me[1]) . ". ed</edition>\r\n";
                     }
-                } else {
-                    if ($sourcePart && !preg_match('/^\d/', $sourcePart)) {
+                } elseif ($pubType === 'journal') {
+                    if ($sourcePart && !preg_match('/^\\d/', $sourcePart)) {
                         $xml .= "\t\t\t\t\t<source>" . htmlspecialchars($sourcePart) . "</source>\r\n";
                     }
-                    if (preg_match('/\b(\d+)\(([\d\-]+)\):(\d+)[-–](\d+)\b/u', $cleanRef, $mp)) {
+                    // Volume, issue, fpage, lpage / elocation-id
+                    if (preg_match('/\\b(\\d+)\\(([ \\d\\-]+)\\):(\\d+-\\d+)\\b/u', $cleanRef, $mp)) {
+                        [$fp, $lp] = explode('-', $mp[3]);
                         $xml .= "\t\t\t\t\t<volume>{$mp[1]}</volume>\r\n";
                         $xml .= "\t\t\t\t\t<issue>{$mp[2]}</issue>\r\n";
-                        $xml .= "\t\t\t\t\t<fpage>{$mp[3]}</fpage>\r\n";
-                        $xml .= "\t\t\t\t\t<lpage>{$mp[4]}</lpage>\r\n";
-                    } elseif (preg_match('/\b(\d+):(\d+)[-–](\d+)\b/u', $cleanRef, $mp)) {
+                        $xml .= "\t\t\t\t\t<fpage>$fp</fpage>\r\n";
+                        $xml .= "\t\t\t\t\t<lpage>$lp</lpage>\r\n";
+                    } elseif (preg_match('/\\b(\\d+):(\\d+)-(\\d+)\\b/u', $cleanRef, $mp)) {
                         $xml .= "\t\t\t\t\t<volume>{$mp[1]}</volume>\r\n";
                         $xml .= "\t\t\t\t\t<fpage>{$mp[2]}</fpage>\r\n";
                         $xml .= "\t\t\t\t\t<lpage>{$mp[3]}</lpage>\r\n";
-                    } elseif (preg_match('/\b(\d+)\(([\d\-]+)\):(e\d+)\b/u', $cleanRef, $mp)) {
+                    } elseif (preg_match('/\\b(\\d+)\\(([\\d\\-]+)\\):(e\\d+)\\b/u', $cleanRef, $mp)) {
                         $xml .= "\t\t\t\t\t<volume>{$mp[1]}</volume>\r\n";
                         $xml .= "\t\t\t\t\t<issue>{$mp[2]}</issue>\r\n";
                         $xml .= "\t\t\t\t\t<elocation-id>{$mp[3]}</elocation-id>\r\n";
-                    } elseif (preg_match('/\b(\d+):(e\d+)\b/u', $cleanRef, $mp)) {
+                    } elseif (preg_match('/\\b(\\d+):(e\\d+)\\b/u', $cleanRef, $mp)) {
                         $xml .= "\t\t\t\t\t<volume>{$mp[1]}</volume>\r\n";
                         $xml .= "\t\t\t\t\t<elocation-id>{$mp[2]}</elocation-id>\r\n";
                     }
                 }
 
+                // Año
                 if ($year) {
                     $xml .= "\t\t\t\t\t<year>$year</year>\r\n";
                 }
 
-                if (preg_match('/10\.\d{4,9}\/\S+/u', $cleanRef, $md)) {
+                // DOI
+                if ($hasDoi && preg_match('/10\\.\\d{4,9}\\/\\S+/u', $cleanRef, $md)) {
                     $xml .= "\t\t\t\t\t<pub-id pub-id-type=\"doi\">" . htmlspecialchars($md[0]) . "</pub-id>\r\n";
                 }
 
-                if (preg_match('/https?:\/\/\S+/i', $cleanRef, $mu)) {
-                    $u = rtrim($mu[0], '.]');
-                    $xml .= "\t\t\t\t\t<ext-link ext-link-type=\"uri\" xlink:href=\"" . htmlspecialchars($u) . "\">" . htmlspecialchars($u) . "</ext-link>\r\n";
-                }
-
-                if (preg_match('/\[citado\s+(.+?)\]/iu', $cleanRef, $mad)) {
-                    $xml .= "\t\t\t\t\t<date-in-citation content-type=\"access-date\">" . htmlspecialchars($mad[1]) . "</date-in-citation>\r\n";
-                }
-
-                if (preg_match('/\b(?:Disponible en|Available from)\s*:(.*)$/iu', $cleanRef, $mc)) {
-                    $xml .= "\t\t\t\t\t<comment>" . htmlspecialchars(trim($mc[1])) . "</comment>\r\n";
+                // Para páginas web: fecha de acceso con iso-8601 + URL en <comment>
+                if ($isWebpage) {
+                    // Fecha de acceso
+                    if (preg_match('/\\[citado\\s+(.+?)\\]/iu', $cleanRef, $mad)) {
+                        // Intentar construir iso-8601 (ej "10 feb 2025" -> "2025-02-10")
+                        $accessRaw = trim($mad[1]);
+                        $isoDate   = '';
+                        $monthMapAcc = ['ene'=>'01','jan'=>'01','feb'=>'02','mar'=>'03','abr'=>'04','apr'=>'04',
+                                        'may'=>'05','jun'=>'06','jul'=>'07','ago'=>'08','aug'=>'08',
+                                        'sep'=>'09','oct'=>'10','nov'=>'11','dic'=>'12','dec'=>'12'];
+                        if (preg_match('/(\\d{1,2})\\s+([a-záéíóúñ]+)\\s+(\\d{4})/iu', $accessRaw, $dm)) {
+                            $mk = strtolower(substr($dm[2], 0, 3));
+                            $mn = $monthMapAcc[$mk] ?? '';
+                            if ($mn) $isoDate = $dm[3] . '-' . $mn . '-' . str_pad($dm[1], 2, '0', STR_PAD_LEFT);
+                        }
+                        $isoAttr = $isoDate ? ' iso-8601-date="' . $isoDate . '"' : '';
+                        $xml .= "\t\t\t\t\t<date-in-citation content-type=\"access-date\"$isoAttr>" . htmlspecialchars($accessRaw) . "</date-in-citation>\r\n";
+                    }
+                    // URL en <comment>
+                    if ($hasUrl && preg_match('/https?:\\/\\/\\S+/i', $cleanRef, $mu)) {
+                        $u = rtrim($mu[0], '.');
+                        $xml .= "\t\t\t\t\t<comment>Disponible en: <ext-link ext-link-type=\"uri\" xlink:href=\"" . htmlspecialchars($u) . "\">" . htmlspecialchars($u) . "</ext-link>\r\n\t\t\t\t\t</comment>\r\n";
+                    }
+                } else {
+                    // Para libros/journals que tengan URL (raro), solo ext-link
+                    if ($hasUrl && preg_match('/https?:\\/\\/\\S+/i', $cleanRef, $mu)) {
+                        $u = rtrim($mu[0], '.');
+                        $xml .= "\t\t\t\t\t<ext-link ext-link-type=\"uri\" xlink:href=\"" . htmlspecialchars($u) . "\">" . htmlspecialchars($u) . "</ext-link>\r\n";
+                    }
                 }
 
                 $xml .= "\t\t\t\t</element-citation>\r\n";
@@ -2293,6 +2475,8 @@ class DocxParser
     {
         // Prepara $text con el valor que se usará después.
         $text = (string) $text;
+        // Normalizar guión largo (–) a guión simple (-) para alinear con XML de referencia.
+        $text = str_replace("\xE2\x80\x93", '-', $text);
         // Inicializa $result vacío para llenarlo si aparece el dato.
         $result = '';
         // Inicializa $offset como contador o índice de control.
@@ -2316,5 +2500,100 @@ class DocxParser
         $result .= htmlspecialchars(substr($text, $offset), ENT_QUOTES | ENT_XML1, 'UTF-8');
         // Devuelve el resultado final de esta parte del proceso.
         return $result;
+    }
+
+    /**
+     * Normaliza cadenas de referencia para detectar rangos de página concatenados
+     * y convertirlos en un formato con guion (start-end).
+     * Ejemplos: 583592 -> 583-592 ; 11631169 -> 1163-1169 ; 97116 -> 97-116
+     */
+    private function normalizeReferencePagesString($text)
+    {
+        if (!is_string($text) || $text === '') return $text;
+
+        return preg_replace_callback('/(?<![\d\.\/\w])(\d{4,7})(?![\d\.\/\w])/u', function ($m) {
+            $digits = $m[1];
+            $len = strlen($digits);
+            if ($len % 2 === 0) {
+                $half = $len / 2;
+                $a = substr($digits, 0, $half);
+                $b = substr($digits, $half);
+            } else {
+                $a = substr($digits, 0, 2);
+                $b = substr($digits, 2);
+                if ((int)$a > (int)$b) {
+                    $a = substr($digits, 0, 3);
+                    $b = substr($digits, 3);
+                }
+            }
+            if (ctype_digit($a) && ctype_digit($b) && (int)$a <= (int)$b) {
+                return $a . '-' . $b;
+            }
+            return $digits;
+        }, $text);
+    }
+
+    /**
+     * Separa una cadena de autores en una lista estructurada.
+     * Retorna ['authors'=>[['surname'=>'','given'=>''],...], 'etal'=>bool]
+     */
+    private function parseAuthorList($authorText)
+    {
+        $res = ['authors' => [], 'etal' => false];
+        if (!is_string($authorText) || trim($authorText) === '') return $res;
+
+        if (preg_match('/et\s*al\b/i', $authorText)) {
+            $res['etal'] = true;
+            $authorText = preg_replace('/\s*et\s*al\b/i', '', $authorText);
+        }
+
+        // Split by comma, semicolon, 'and', 'y'
+        $parts = preg_split('/\s*(?:,|;|\band\b|\by\b)\s*/iu', trim($authorText));
+        $parts = array_filter(array_map('trim', $parts));
+
+        foreach ($parts as $p) {
+            if ($p === '') continue;
+            
+            // Try to parse "Surname, Given Names" or "Given Names Surname"
+            if (preg_match('/^([\p{L}\p{M}\s\-\']+,)\s*([\p{L}\p{M}\s\-\'\.]+)$/u', $p, $m)) { // Surname, Given Names
+                $surname = trim($m[1], ',');
+                $given = $m[2];
+            } elseif (preg_match('/^([\p{L}\p{M}\s\-\'\.]+\s+[\p{L}\p{M}\s\-\'\.]+)$/u', $p, $m)) { // Given Names Surname (simple case)
+                $tokens = preg_split('/\s+/u', $p);
+                if (count($tokens) > 1) {
+                    $surname = array_pop($tokens);
+                    $given = implode(' ', $tokens);
+                } else {
+                    $surname = $p;
+                    $given = '';
+                }
+            } elseif (preg_match('/^([\p{L}\p{M}\s\-\']+)$/u', $p, $m)) { // Single name, assume surname
+                $surname = $m[1];
+                $given = '';
+            } else {
+                // Fallback for more complex cases or initials
+                $tokens = preg_split('/\s+/u', $p);
+                if (count($tokens) > 1) {
+                    // Heuristic: if last part is all caps or initials, it's likely given names.
+                    // Otherwise, assume last part is surname.
+                    $lastToken = end($tokens);
+                    if (preg_match('/^[\p{L}\p{M}]{1,3}\.?$/u', $lastToken) && count($tokens) > 1) { // e.g., Eich M
+                        $surname = array_shift($tokens);
+                        $given = implode(' ', $tokens);
+                    } else { // e.g., M. Eich
+                        $surname = array_pop($tokens);
+                        $given = implode(' ', $tokens);
+                    }
+                } else {
+                    $surname = $p;
+                    $given = '';
+                }
+            }
+            
+            // Ensure surname and given names are not empty
+            $res['authors'][] = ['surname' => trim($surname), 'given' => trim($given)];
+        }
+
+        return $res;
     }
 }
