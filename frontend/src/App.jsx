@@ -872,44 +872,44 @@ function buildJatsFromMeta(meta, referenceXml = '') {
   const pubId = doi ? doi.split('/').slice(1).join('/') : 'XXXX';
   const year = meta.accepted?.match(/\d{4}/)?.[0] || meta.pubdate?.match(/\d{4}/)?.[0] || new Date().getFullYear();
 
-  let journalMeta = '  <journal-meta>\n';
-  journalMeta += `      <journal-id journal-id-type="nlm-ta">${e(meta.journalAbbrev || meta.journalTitle || '')}</journal-id>\n`;
-  journalMeta += '      <journal-title-group>\n';
-  journalMeta += `        <journal-title>${e(meta.journalTitle || '')}</journal-title>\n`;
-  journalMeta += `        <abbrev-journal-title abbrev-type="publisher">${e(meta.journalAbbrev || '')}</abbrev-journal-title>\n`;
-  journalMeta += '      </journal-title-group>\n';
+  let journalMeta = '\t<journal-meta>\r\n';
+  journalMeta += `\t\t<journal-id journal-id-type="nlm-ta">${e(meta.journalAbbrev || meta.journalTitle || '')}</journal-id>\r\n`;
+  journalMeta += '\t\t<journal-title-group>\r\n';
+  journalMeta += `\t\t\t<journal-title>${e(meta.journalTitle || '')}</journal-title>\r\n`;
+  journalMeta += `\t\t\t<abbrev-journal-title abbrev-type="publisher">${e(meta.journalAbbrev || '')}</abbrev-journal-title>\r\n`;
+  journalMeta += '\t\t</journal-title-group>\r\n';
   if (meta.issn_ppub) {
-    journalMeta += `      <issn pub-type="ppub">${e(meta.issn_ppub)}</issn>\n`;
+    journalMeta += `\t\t<issn pub-type="ppub">${e(meta.issn_ppub)}</issn>\r\n`;
   }
   if (meta.issn_epub) {
-    journalMeta += `      <issn pub-type="epub">${e(meta.issn_epub)}</issn>\n`;
+    journalMeta += `\t\t<issn pub-type="epub">${e(meta.issn_epub)}</issn>\r\n`;
   }
-  journalMeta += '      <publisher>\n';
-  journalMeta += `        <publisher-name>${e(meta.publisher || '')}</publisher-name>\n`;
-  journalMeta += '      </publisher>\n';
-  journalMeta += '    </journal-meta>';
+  journalMeta += '\t\t<publisher>\r\n';
+  journalMeta += `\t\t\t<publisher-name>${e(meta.publisher || '')}</publisher-name>\r\n`;
+  journalMeta += '\t\t</publisher>\r\n';
+  journalMeta += '\t</journal-meta>';
 
-  let articleMeta = '    <article-meta>\n';
-  articleMeta += `      <article-id pub-id-type="publisher-id">${e(pubId)}</article-id>\n`;
+  let articleMeta = '\t<article-meta>\r\n';
+  articleMeta += `\t\t<article-id pub-id-type="publisher-id">${e(pubId)}</article-id>\r\n`;
   if (doi) {
-    articleMeta += `      <article-id pub-id-type="doi">${e(doi)}</article-id>\n`;
+    articleMeta += `\t\t<article-id pub-id-type="doi">${e(doi)}</article-id>\r\n`;
   }
-  articleMeta += '      <article-categories>\n';
-  articleMeta += '        <subj-group subj-group-type="heading">\n';
-  articleMeta += '          <subject>Artículo</subject>\n';
-  articleMeta += '        </subj-group>\n';
-  articleMeta += '      </article-categories>\n';
+  articleMeta += '\t\t<article-categories>\r\n';
+  articleMeta += '\t\t\t<subj-group subj-group-type="heading">\r\n';
+  articleMeta += '\t\t\t\t<subject>Artículo</subject>\r\n';
+  articleMeta += '\t\t\t</subj-group>\r\n';
+  articleMeta += '\t\t</article-categories>\r\n';
 
-  articleMeta += '      <title-group>\n';
-  articleMeta += `        <article-title xml:lang="es">${e(meta.articleTitle || '')}</article-title>\n`;
+  articleMeta += '\t\t<title-group>\r\n';
+  articleMeta += `\t\t\t<article-title xml:lang="es">${e(meta.articleTitle || '')}</article-title>\r\n`;
   if (meta.articleTitleEn) {
-    articleMeta += '        <trans-title-group xml:lang="en">\n';
-    articleMeta += `          <trans-title>${e(meta.articleTitleEn)}</trans-title>\n`;
-    articleMeta += '        </trans-title-group>\n';
+    articleMeta += '\t\t\t<trans-title-group xml:lang="en">\r\n';
+    articleMeta += `\t\t\t\t<trans-title>${e(meta.articleTitleEn)}</trans-title>\r\n`;
+    articleMeta += '\t\t\t</trans-title-group>\r\n';
   }
-  articleMeta += '      </title-group>\n';
+  articleMeta += '\t\t</title-group>\r\n';
 
-  articleMeta += '      <contrib-group>\n';
+  articleMeta += '\t\t<contrib-group>\r\n';
   // Si hay mas autores que afiliaciones, reutiliza la ultima afiliacion valida para evitar rid rotos.
   const availableAffCount = Math.max((meta.affiliations || []).length, 1);
   (meta.authors || []).forEach((author, index) => {
@@ -986,97 +986,97 @@ function buildJatsFromMeta(meta, referenceXml = '') {
       const day = parts[0] || '';
       const month = parts[1] || '';
       const yearPart = parts[2] || String(value).match(/\d{4}/)?.[0] || '';
-      let dateXml = `        <date date-type="${type}">\n`;
-      if (day) dateXml += `          <day>${e(day)}</day>\n`;
-      if (month) dateXml += `          <month>${e(month)}</month>\n`;
-      if (yearPart) dateXml += `          <year>${e(yearPart)}</year>\n`;
-      dateXml += '        </date>\n';
+      let dateXml = `\t\t\t<date date-type="${type}">\r\n`;
+      if (day) dateXml += `\t\t\t\t<day>${e(day)}</day>\r\n`;
+      if (month) dateXml += `\t\t\t\t<month>${e(month)}</month>\r\n`;
+      if (yearPart) dateXml += `\t\t\t\t<year>${e(yearPart)}</year>\r\n`;
+      dateXml += '\t\t\t</date>\r\n';
       return dateXml;
     };
 
-    articleMeta += '      <history>\n';
+    articleMeta += '\t\t<history>\r\n';
     articleMeta += addHistoryDate('received', meta.received);
     articleMeta += addHistoryDate('rev-recd', meta.revised);
     articleMeta += addHistoryDate('accepted', meta.accepted);
-    articleMeta += '      </history>\n';
+    articleMeta += '\t\t</history>\r\n';
   }
 
-  articleMeta += '      <permissions>\n';
-  articleMeta += '        <license license-type="open-access" xlink:href="https://creativecommons.org/licenses/by/4.0/" xml:lang="es">\n';
-  articleMeta += '          <license-p>Este es un artículo publicado en acceso abierto bajo una licencia Creative Commons</license-p>\n';
-  articleMeta += '        </license>\n';
-  articleMeta += '      </permissions>\n';
+  articleMeta += '\t\t<permissions>\r\n';
+  articleMeta += '\t\t\t<license license-type="open-access" xlink:href="https://creativecommons.org/licenses/by/4.0/" xml:lang="es">\r\n';
+  articleMeta += '\t\t\t\t<license-p>Este es un artículo publicado en acceso abierto bajo una licencia Creative Commons</license-p>\r\n';
+  articleMeta += '\t\t\t</license>\r\n';
+  articleMeta += '\t\t</permissions>\r\n';
 
   if (meta.abstractEs) {
-    articleMeta += '      <abstract>\n';
-    articleMeta += '        <title>Resumen</title>\n';
-    articleMeta += `        <p>${escapeXmlWithItalic(meta.abstractEs)}</p>\n`;
-    articleMeta += '      </abstract>\n';
+    articleMeta += '\t\t<abstract>\r\n';
+    articleMeta += '\t\t\t<title>Resumen</title>\r\n';
+    articleMeta += `\t\t\t<p>${escapeXmlWithItalic(meta.abstractEs)}</p>\r\n`;
+    articleMeta += '\t\t</abstract>\r\n';
   }
   if (meta.abstractEn) {
-    articleMeta += '      <trans-abstract xml:lang="en">\n';
-    articleMeta += '        <title>Abstract</title>\n';
-    articleMeta += `        <p>${e(meta.abstractEn)}</p>\n`;
-    articleMeta += '      </trans-abstract>\n';
+    articleMeta += '\t\t<trans-abstract xml:lang="en">\r\n';
+    articleMeta += '\t\t\t<title>Abstract</title>\r\n';
+    articleMeta += `\t\t\t<p>${e(meta.abstractEn)}</p>\r\n`;
+    articleMeta += '\t\t</trans-abstract>\r\n';
   }
 
   if (meta.kwdsEs && meta.kwdsEs.length) {
-    articleMeta += '      <kwd-group xml:lang="es">\n';
-    articleMeta += '        <title>Palabras claves:</title>\n';
+    articleMeta += '\t\t<kwd-group xml:lang="es">\r\n';
+    articleMeta += '\t\t\t<title>Palabras claves:</title>\r\n';
     meta.kwdsEs.forEach(keyword => {
-      articleMeta += `        <kwd>${e(keyword)}</kwd>\n`;
+      articleMeta += `\t\t\t\t<kwd>${e(keyword)}</kwd>\r\n`;
     });
-    articleMeta += '      </kwd-group>\n';
+    articleMeta += '\t\t</kwd-group>\r\n';
   }
   if (meta.kwdsEn && meta.kwdsEn.length) {
-    articleMeta += '      <kwd-group xml:lang="en">\n';
-    articleMeta += '        <title>Keywords:</title>\n';
+    articleMeta += '\t\t<kwd-group xml:lang="en">\r\n';
+    articleMeta += '\t\t\t<title>Keywords:</title>\r\n';
     meta.kwdsEn.forEach(keyword => {
-      articleMeta += `        <kwd>${e(keyword)}</kwd>\n`;
+      articleMeta += `\t\t\t\t<kwd>${e(keyword)}</kwd>\r\n`;
     });
-    articleMeta += '      </kwd-group>\n';
+    articleMeta += '\t\t</kwd-group>\r\n';
   }
 
   if (meta.funding && meta.funding.length) {
-    articleMeta += '      <funding-group>\n';
+    articleMeta += '\t\t<funding-group>\r\n';
     meta.funding.forEach(fundingSource => {
-      articleMeta += '        <award-group award-type="contract">\n';
-      articleMeta += '          <funding-source>\n';
-      articleMeta += `            ${e(fundingSource)}\n`;
-      articleMeta += '          </funding-source>\n';
-      articleMeta += '        </award-group>\n';
+      articleMeta += '\t\t\t<award-group award-type="contract">\r\n';
+      articleMeta += '\t\t\t\t<funding-source>\r\n';
+      articleMeta += `\t\t\t\t\t${e(fundingSource)}\r\n`;
+      articleMeta += '\t\t\t\t</funding-source>\r\n';
+      articleMeta += '\t\t\t</award-group>\r\n';
     });
-    articleMeta += `        <funding-statement>${e((meta.funding || []).join('; '))}</funding-statement>\n`;
-    articleMeta += '      </funding-group>\n';
+    articleMeta += `\t\t<funding-statement>${e((meta.funding || []).join('; '))}</funding-statement>\r\n`;
+    articleMeta += '\t\t</funding-group>\r\n';
   }
 
   const refCount = meta.refCount || 0;
-  articleMeta += '      <counts>\n';
-  articleMeta += '        <fig-count count="0"/>\n';
-  articleMeta += '        <table-count count="0"/>\n';
-  articleMeta += '        <equation-count count="0"/>\n';
-  articleMeta += `        <ref-count count="${e(refCount)}"/>\n`;
-  articleMeta += '        <page-count count="1"/>\n';
-  articleMeta += '      </counts>\n';
-  articleMeta += '    </article-meta>\n';
+  articleMeta += '\t\t<counts>\r\n';
+  articleMeta += '\t\t\t<fig-count count="0"/>\r\n';
+  articleMeta += '\t\t\t<table-count count="0"/>\r\n';
+  articleMeta += '\t\t\t<equation-count count="0"/>\r\n';
+  articleMeta += `\t\t\t<ref-count count="${e(refCount)}"/>\r\n`;
+  articleMeta += '\t\t\t<page-count count="1"/>\r\n';
+  articleMeta += '\t\t</counts>\r\n';
+  articleMeta += '\t</article-meta>\r\n';
 
   const body = buildBodyXml(meta);
   const back = buildBackXml(meta);
 
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE article PUBLIC "-//NLM//DTD JATS (Z39.96) Journal Publishing DTD v1.1 20121330//EN"\n  "https://jats.nlm.nih.gov/publishing/1.1/JATS-journalpublishing1-1.dtd">\n<article dtd-version="1.1" article-type="research-article" specific-use="sps-1.9" xml:lang="${e(meta.lang || 'es')}" xmlns:xlink="http://www.w3.org/1999/xlink">\n\n  <front>\n${journalMeta}\n\n${articleMeta}  </front>\n\n${body}${back}</article>`;
+  return `<?xml version="1.0" encoding="UTF-8"?>\r\n<!DOCTYPE article PUBLIC "-//NLM//DTD JATS (Z39.96) Journal Publishing DTD v1.1 20121330//EN"\r\n  "https://jats.nlm.nih.gov/publishing/1.1/JATS-journalpublishing1-1.dtd">\r\n<article dtd-version="1.1" article-type="research-article" specific-use="sps-1.9" xml:lang="${e(meta.lang || 'es')}" xmlns:xlink="http://www.w3.org/1999/xlink">\r\n\r\n\t<front>\r\n${journalMeta}\r\n\r\n${articleMeta}\t</front>\r\n\r\n${body}${back}</article>`;
 }
 
 function buildBackXml(meta) {
-  let back = '  <back>\n';
-  back += '    <ref-list>\n';
-  back += '      <title>Referencias bibliográficas</title>\n';
-  back += '      <ref id="B1">\n';
-  back += '        <label>1</label>\n';
-  back += '        <element-citation publication-type="journal">\n';
-  back += '          <comment>[Completar referencias en formato JATS element-citation]</comment>\n';
-  back += '        </element-citation>\n';
-  back += '      </ref>\n';
-  back += '    </ref-list>\n';
+  let back = '\t<back>\r\n';
+  back += '\t\t<ref-list>\r\n';
+  back += '\t\t\t<title>Referencias bibliográficas</title>\r\n';
+  back += '\t\t\t<ref id="B1">\r\n';
+  back += '\t\t\t\t<label>1</label>\r\n';
+  back += '\t\t\t\t<element-citation publication-type="journal">\r\n';
+  back += '\t\t\t\t\t<comment>[Completar referencias en formato JATS element-citation]</comment>\r\n';
+  back += '\t\t\t\t</element-citation>\r\n';
+  back += '\t\t\t</ref>\r\n';
+  back += '\t\t</ref-list>\r\n';
 
   const fundingItems = Array.isArray(meta?.funding)
     ? meta.funding.map(item => String(item || '').trim()).filter(Boolean)
@@ -1084,15 +1084,15 @@ function buildBackXml(meta) {
   const fundingStatement = String(meta?.fundingStatement || '').trim();
 
   if (fundingItems.length || fundingStatement) {
-    back += '    <fn-group>\n';
-    back += '      <fn fn-type="financial-disclosure" id="fn1">\n';
-    back += '        <label>Financiamiento</label>\n';
-    back += `        <p> ${esc(fundingStatement || fundingItems.join('; '))}</p>\n`;
-    back += '      </fn>\n';
-    back += '    </fn-group>\n';
+    back += '\t\t<fn-group>\r\n';
+    back += '\t\t\t<fn fn-type="financial-disclosure" id="fn1">\r\n';
+    back += '\t\t\t\t<label>Financiamiento</label>\r\n';
+    back += `\t\t\t\t<p> ${esc(fundingStatement || fundingItems.join('; '))}</p>\r\n`;
+    back += '\t\t\t</fn>\r\n';
+    back += '\t\t</fn-group>\r\n';
   }
 
-  back += '  </back>\n';
+  back += '\t</back>\r\n';
   return back;
 }
 
@@ -1183,17 +1183,17 @@ function renderBodySection(section, depth = 1) {
 
 function buildBodyXml(meta) {
   const sections = normalizeBodySections(meta?.bodySections || meta?.sections || []);
-  const indent = '  ';
+  const indent = '\t';
 
   if (!sections.length) {
-    return '  <body>\n    <sec sec-type="intro">\n      <title>Introducción</title>\n      <p>[Completar con el contenido del manuscrito]</p>\n    </sec>\n  </body>\n';
+    return '\t<body>\r\n\t\t<sec sec-type="intro">\r\n\t\t\t<title>Introducción</title>\r\n\t\t\t<p>[Completar con el contenido del manuscrito]</p>\r\n\t\t</sec>\r\n\t</body>\r\n';
   }
 
-  let xml = '  <body>\n';
+  let xml = '\t<body>\r\n';
   sections.forEach(section => {
     xml += renderBodySection(section, 2);
   });
-  xml += '  </body>\n';
+  xml += '\t</body>\r\n';
   return xml;
 }
 
