@@ -2081,9 +2081,11 @@ class DocxParser
         $isQuote = preg_match('/^“/u', trim(strip_tags($text)));
         // Procesar cursivas y escapar XML
         $content = $this->escapeXmlWithItalic($text);
+        // Normalizar múltiples espacios a uno solo (excepto dentro de tags)
+        $content = preg_replace('/  +/', ' ', $content);
         // Detectar y formatear XREFs (Citas bibliográficas)
         // Captura: números pegados a letra, [N], o (N,N) entre paréntesis
-        $re = '/(?<=\p{L})(\d+(?:[\d,\-\s]*\d+)?)(?=[\s\.\,])|\[([\d,\-\s]+)\]|\((\d[\d,\-\s]*\d?)\)(?=[\s\.\,\;\)]|$)/u';
+        $re = '/(?<=[A-ZÁÉÍÓÚÑ&&[^D]])(\d+(?:[\d,\-\s]*\d+)?)(?=[\s\.\,])|\[([\d,\-\s]+)\]|\((\d[\d,\-\s]*\d?)\)(?=[\s\.\,\;\)\-\"\u201d\:\u201c]|$)/u';
         $content = preg_replace_callback($re, function($m) {
             $val = str_replace(' ', '', !empty($m[3]) ? $m[3] : (!empty($m[2]) ? $m[2] : $m[1]));
             $parts = explode(',', $val);
@@ -2120,6 +2122,10 @@ class DocxParser
         if (preg_match('/^(El presente trabajo fue realizado|Los autores declaran|Todos los autores revisaron)/iu', $plain)) {
             return '';
         }
+        // Filtrar párrafos de contribución autoral individuales (ej: "Melisse Eich: Conceptualización...")
+        if (preg_match('/^[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){1,4}:\s*(Conceptualiz|Investigaci|Análisis|Elaboraci|Redacci|Revisi)/u', $plain)) {
+            return '';
+        }
         if ($isQuote) {
             return $indent . "<disp-quote>\r\n"
                  . $indent . "\t<p>" . $content . "</p>\r\n"
@@ -2144,7 +2150,7 @@ class DocxParser
         if ($count > 0) {
             foreach ($references as $i => $refText) {
                 $num = $i + 1;
-                $cleanRef = trim(strip_tags($refText));
+                $cleanRef = rtrim(trim(strip_tags($refText)));
                 $cleanRef = preg_replace('/^\s*\d+\.\s*/u', '', $cleanRef);
                 $xml .= $this->buildReferenceXmlBlock($num, $cleanRef);
             }
@@ -2188,7 +2194,50 @@ class DocxParser
 
         $xml = "\t\t\t<ref id=\"B$num\">\r\n";
         $xml .= "\t\t\t\t<label>$num</label>\r\n";
-        $xml .= "\t\t\t\t<mixed-citation>$num. " . $this->escapeXmlWithItalic($cleanRef) . "</mixed-citation>\r\n";
+
+        $hasUrl = (bool)preg_match('/https?:\/\//i', $cleanRef);
+        $hasDoi = (bool)preg_match('/10\.\d{4,9}\//u', $cleanRef);
+        // Referencias [Internet] gubernamentales: solo se clasifican como 'book' los códigos de ética
+        // y proyectos de ley en forma abreviada (PL NNNN/YYYY). Los "Projeto de Lei" completos van como 'webpage'.
+        $isLegislativeBill = $hasUrl && stripos($cleanRef, '[Internet]') !== false
+            && (bool)preg_match('/\bC[oó]digo de [EÉ]tica\b/ui', $cleanRef);
+        $isWebpage = $hasUrl && stripos($cleanRef, '[Internet]') !== false && !$isLegislativeBill;
+        // Detectar libros por patrón "Ciudad: Editorial; año" o "N. ed."
+        $isBook = (bool)preg_match('/\b\d+\.\s*ed\b/iu', $cleanRef)
+               || (bool)preg_match('/[A-ZÁÉÍÓÚÑ][^:]{1,40}:\s*[^;]{3,60};\s*(?:19|20)\d{2}/u', $cleanRef);
+        $isJournal = !$isWebpage && !$isBook && (
+            preg_match('/\b(Revista|Journal|Annals|Interface|Saúde|Salud|Cuadernos|Trayectorias|Holos|Cadernos)\b/iu', $cleanRef)
+            || preg_match('/\d+\(([\d\-]+)\)[:\s]/u', $cleanRef)
+            || preg_match('/\b(?:vol|v\.)\s*\d+/iu', $cleanRef)
+            || $hasDoi
+        );
+        $pubType = $isWebpage ? 'webpage' : ($isLegislativeBill ? 'book' : ($isJournal ? 'journal' : 'book'));
+
+        // Construir mixed-citation: para webpages y proyectos de ley embeber URL en <comment>
+        $mixedText = $this->escapeXmlWithItalic($cleanRef);
+        if (($isWebpage || $isLegislativeBill) && $hasUrl && preg_match('/(https?:\/\/\S+)/i', $cleanRef, $mu)) {
+            $u = htmlspecialchars(rtrim($mu[1], '.'));
+            // Reemplazar la URL suelta por <comment>Disponible en: <ext-link>...</ext-link>\n</comment>
+            $mixedText = preg_replace(
+                '/Disponible en:\s*' . preg_quote(htmlspecialchars(rtrim($mu[1], '.')), '/') . '/u',
+                'Disponible en: <comment>Disponible en: <ext-link ext-link-type="uri" xlink:href="' . $u . '">' . $u . "</ext-link>\r\n\t\t\t\t\t</comment>",
+                $mixedText
+            );
+            // Si no matcheó (URL sin "Disponible en:"), reemplazar URL directamente
+            if (strpos($mixedText, '<comment>') === false) {
+                $mixedText = str_replace(
+                    htmlspecialchars(rtrim($mu[1], '.')),
+                    '<comment>Disponible en: <ext-link ext-link-type="uri" xlink:href="' . $u . '">' . $u . "</ext-link>\r\n\t\t\t\t\t</comment>",
+                    $mixedText
+                );
+            }
+        }
+        if (strpos($mixedText, '</comment>') !== false) {
+            // mixed-citation cierra en línea separada cuando contiene <comment>
+            $xml .= "\t\t\t\t<mixed-citation>$num. " . $mixedText . "\r\n\t\t\t\t</mixed-citation>\r\n";
+        } else {
+            $xml .= "\t\t\t\t<mixed-citation>$num. " . rtrim($mixedText) . "</mixed-citation>\r\n";
+        }
 
         $authorPart = '';
         $rest = $cleanRef;
@@ -2197,16 +2246,6 @@ class DocxParser
             $rest = trim($m[2]);
         }
 
-        $hasUrl = (bool)preg_match('/https?:\/\//i', $cleanRef);
-        $hasDoi = (bool)preg_match('/10\.\d{4,9}\//u', $cleanRef);
-        $isWebpage = $hasUrl && stripos($cleanRef, '[Internet]') !== false;
-        $isJournal = !$isWebpage && (
-            preg_match('/\b(Revista|Journal|Annals|Interface|Saúde|Salud|Cuadernos|Trayectorias|Holos|Cadernos)\b/iu', $cleanRef)
-            || preg_match('/\d+\(([\d\-]+)\)[:\s]/u', $cleanRef)
-            || preg_match('/\b(?:vol|v\.)\s*\d+/iu', $cleanRef)
-            || $hasDoi
-        );
-        $pubType = $isWebpage ? 'webpage' : ($isJournal ? 'journal' : 'book');
         $xml .= "\t\t\t\t<element-citation publication-type=\"$pubType\">\r\n";
         $bodyRef = $rest !== '' ? $rest : $cleanRef;
         $year = '';
@@ -2245,59 +2284,90 @@ class DocxParser
 
         if ($authorPart !== '') {
             $isCollab = preg_match('/\b(Organiza|Ministerio|Minist[eé]rio|Conselho|Consejo|Brasil|Colombia|Universida|Fundaç|Comiss[aã]o|Comisi[oó]n|World Health|WHO|PAHO|UNESCO|United Nations|Committee)\b/iu', $authorPart);
-            $xml .= "\t\t\t\t<person-group person-group-type=\"author\">\r\n";
+            $xml .= "\t\t\t\t\t<person-group person-group-type=\"author\">\r\n";
             if ($isCollab) {
-                $xml .= "\t\t\t\t\t<collab>" . htmlspecialchars(trim($authorPart)) . "</collab>\r\n";
+                $xml .= "\t\t\t\t\t\t<collab>" . htmlspecialchars(trim($authorPart)) . "</collab>\r\n";
             } else {
                 $parsed = $this->parseAuthorList($authorPart);
                 $authorsList = $parsed['authors'] ?? [];
                 $hasEtal = $parsed['etal'] ?? false;
                 foreach ($authorsList as $an) {
-                    $xml .= "\t\t\t\t\t<name>\r\n";
-                    $xml .= "\t\t\t\t\t\t<surname>" . htmlspecialchars($an['surname']) . "</surname>\r\n";
+                    $xml .= "\t\t\t\t\t\t<name>\r\n";
+                    $xml .= "\t\t\t\t\t\t\t<surname>" . htmlspecialchars($an['surname']) . "</surname>\r\n";
                     if ($an['given'] !== '') {
-                        $xml .= "\t\t\t\t\t\t<given-names>" . htmlspecialchars($an['given']) . "</given-names>\r\n";
+                        $xml .= "\t\t\t\t\t\t\t<given-names>" . htmlspecialchars($an['given']) . "</given-names>\r\n";
                     }
-                    $xml .= "\t\t\t\t\t</name>\r\n";
+                    $xml .= "\t\t\t\t\t\t</name>\r\n";
                 }
-                if ($hasEtal || count($authorsList) > 3) {
-                    $xml .= "\t\t\t\t\t<etal/>\r\n";
+                if ($hasEtal) {
+                    $xml .= "\t\t\t\t\t\t<etal/>\r\n";
                 }
             }
-            $xml .= "\t\t\t\t</person-group>\r\n";
+            $xml .= "\t\t\t\t\t</person-group>\r\n";
         }
 
         if ($pubType === 'book') {
-            $bookPattern = '/^(?<title>.+?)\.\s*(?:(?<edition>\d+\.\s*ed\.?)[.\s]*)?(?<loc>[^:]{2,80}):\s*(?<publisher>[^;]+);\s*(?<year>(?:19|20)\d{2})\.?$/u';
-            if (preg_match($bookPattern, $bodyRef, $m)) {
-                $xml .= "\t\t\t\t<source>" . htmlspecialchars(trim($m['title'])) . "</source>\r\n";
+            if ($isLegislativeBill) {
+                // Proyecto de ley con URL: salida igual a webpage pero bajo type="book"
+                if ($bodyRef !== '') {
+                    $billTitle = preg_replace('/\s*\[Internet\].*$/iu', '', $bodyRef);
+                    $billTitle = preg_replace('/\s*\[citado\s+.+?\].*$/iu', '', $billTitle);
+                    $billTitle = preg_replace('/\s*[.;,]\s*$/u', '', $billTitle);
+                    $xml .= "\t\t\t\t\t<source>" . htmlspecialchars(trim($billTitle)) . "</source>\r\n";
+                }
+                if ($year !== '') {
+                    $xml .= "\t\t\t\t\t<year>" . htmlspecialchars($year) . "</year>\r\n";
+                }
+                if (preg_match('/\[citado\s+(.+?)\]/iu', $cleanRef, $mad)) {
+                    $accessRaw = trim($mad[1]);
+                    $isoDate = '';
+                    if (preg_match('/(\d{1,2})\s+([a-záéíóúñ]+)\s+(\d{4})/iu', $accessRaw, $dm)) {
+                        $mk = strtolower(substr($dm[2], 0, 3));
+                        $mn = $monthMapAcc[$mk] ?? '';
+                        if ($mn) $isoDate = $dm[3] . '-' . $mn . '-' . str_pad($dm[1], 2, '0', STR_PAD_LEFT);
+                    }
+                    $isoAttr = $isoDate ? ' iso-8601-date="' . $isoDate . '"' : '';
+                    $xml .= "\t\t\t\t\t<date-in-citation content-type=\"access-date\"$isoAttr>citado {$accessRaw}</date-in-citation>\r\n";
+                }
+                if (preg_match('/https?:\/\/\S+/i', $cleanRef, $mu)) {
+                    $u = rtrim($mu[0], '.');
+                    $xml .= "\t\t\t\t\t<comment>Disponible en: <ext-link ext-link-type=\"uri\" xlink:href=\"" . htmlspecialchars($u) . "\">" . htmlspecialchars($u) . "</ext-link>\r\n\t\t\t\t\t</comment>\r\n";
+                }
+            } else {
+            // Extraer Ciudad: Editorial; año desde el final de la referencia
+            // Patrón: buscar "Ciudad: Editorial; año" al final, el resto es el título
+            // loc no puede contener puntos (evita que nombres propios con abreviaturas sean tomados como ciudad)
+            $bookPatternEnd = '/^(?<title>.+?)\s*(?:(?<edition>\d+\.\s*ed\.?)\s*[.\s]*)?\s*(?<loc>[A-ZÁÉÍÓÚÑ][^:.]{1,40}):\s*(?<publisher>[^;]{3,80});\s*(?<year>(?:19|20)\d{2})\.?\s*$/u';
+            if (preg_match($bookPatternEnd, $bodyRef, $m)) {
+                $xml .= "\t\t\t\t\t<source>" . htmlspecialchars(rtrim(trim($m['title']), '.')) . "</source>\r\n";
                 if (!empty($m['edition'])) {
                     $edition = preg_replace('/\s+/u', ' ', trim($m['edition']));
-                    $xml .= "\t\t\t\t<edition>" . htmlspecialchars(rtrim($edition, '.')) . "</edition>\r\n";
+                    $xml .= "\t\t\t\t\t<edition>" . htmlspecialchars(rtrim($edition, '.')) . "</edition>\r\n";
                 }
-                $xml .= "\t\t\t\t<publisher-loc>" . htmlspecialchars(trim($m['loc'])) . "</publisher-loc>\r\n";
-                $xml .= "\t\t\t\t<publisher-name>" . htmlspecialchars(trim($m['publisher'])) . "</publisher-name>\r\n";
-                $xml .= "\t\t\t\t<year>" . htmlspecialchars($m['year']) . "</year>\r\n";
+                $xml .= "\t\t\t\t\t<publisher-loc>" . htmlspecialchars(trim($m['loc'])) . "</publisher-loc>\r\n";
+                $xml .= "\t\t\t\t\t<publisher-name>" . htmlspecialchars(trim($m['publisher'])) . "</publisher-name>\r\n";
+                $xml .= "\t\t\t\t\t<year>" . htmlspecialchars($m['year']) . "</year>\r\n";
             } else {
                 $bookTitle = preg_replace('/\s*\[[^\]]*\]\s*$/u', '', $bodyRef);
                 $bookTitle = preg_replace('/\s*:\s*[^:;]+;\s*(?:19|20)\d{2}\.?$/u', '', $bookTitle);
                 $bookTitle = preg_replace('/\s*[.;,]\s*$/u', '', $bookTitle);
                 if ($bookTitle !== '') {
-                    $xml .= "\t\t\t\t<source>" . htmlspecialchars(trim($bookTitle)) . "</source>\r\n";
+                    $xml .= "\t\t\t\t\t<source>" . htmlspecialchars(trim($bookTitle)) . "</source>\r\n";
                 }
                 if (preg_match('/\b((?:19|20)\d{2})\b/', $bodyRef, $my)) {
-                    $xml .= "\t\t\t\t<year>" . htmlspecialchars($my[1]) . "</year>\r\n";
+                    $xml .= "\t\t\t\t\t<year>" . htmlspecialchars($my[1]) . "</year>\r\n";
                 }
+            }
             }
         } elseif ($pubType === 'webpage') {
             if ($bodyRef !== '') {
                 $pageTitle = preg_replace('/\s*\[Internet\].*$/iu', '', $bodyRef);
                 $pageTitle = preg_replace('/\s*\[citado\s+.+?\].*$/iu', '', $pageTitle);
                 $pageTitle = preg_replace('/\s*[.;,]\s*$/u', '', $pageTitle);
-                $xml .= "\t\t\t\t<article-title>" . htmlspecialchars(trim($pageTitle)) . "</article-title>\r\n";
+                $xml .= "\t\t\t\t\t<source>" . htmlspecialchars(trim($pageTitle)) . "</source>\r\n";
             }
             if ($year !== '') {
-                $xml .= "\t\t\t\t<year>" . htmlspecialchars($year) . "</year>\r\n";
+                $xml .= "\t\t\t\t\t<year>" . htmlspecialchars($year) . "</year>\r\n";
             }
             if (preg_match('/\[citado\s+(.+?)\]/iu', $cleanRef, $mad)) {
                 $accessRaw = trim($mad[1]);
@@ -2308,14 +2378,11 @@ class DocxParser
                     if ($mn) $isoDate = $dm[3] . '-' . $mn . '-' . str_pad($dm[1], 2, '0', STR_PAD_LEFT);
                 }
                 $isoAttr = $isoDate ? ' iso-8601-date="' . $isoDate . '"' : '';
-                $xml .= "\t\t\t\t<date-in-citation content-type=\"access-date\"$isoAttr>citado {$accessRaw}</date-in-citation>\r\n";
+                $xml .= "\t\t\t\t\t<date-in-citation content-type=\"access-date\"$isoAttr>citado {$accessRaw}</date-in-citation>\r\n";
             }
             if (preg_match('/https?:\/\/\S+/i', $cleanRef, $mu)) {
                 $u = rtrim($mu[0], '.');
-                $xml .= "\t\t\t\t<comment>\r\n";
-                $xml .= "\t\t\t\t\tDisponible en:\r\n";
-                $xml .= "\t\t\t\t\t<ext-link ext-link-type=\"uri\" xlink:href=\"" . htmlspecialchars($u) . "\">" . htmlspecialchars($u) . "</ext-link>\r\n";
-                $xml .= "\t\t\t\t</comment>\r\n";
+                $xml .= "\t\t\t\t\t<comment>Disponible en: <ext-link ext-link-type=\"uri\" xlink:href=\"" . htmlspecialchars($u) . "\">" . htmlspecialchars($u) . "</ext-link>\r\n\t\t\t\t\t</comment>\r\n";
             }
         } else {
             $source = '';
@@ -2340,41 +2407,41 @@ class DocxParser
             }
 
             if ($articleTitle !== '') {
-                $xml .= "\t\t\t\t<article-title>" . htmlspecialchars($articleTitle) . "</article-title>\r\n";
+                $xml .= "\t\t\t\t\t<article-title>" . htmlspecialchars($articleTitle) . "</article-title>\r\n";
             }
             if ($source !== '') {
-                $xml .= "\t\t\t\t<source>" . htmlspecialchars($source) . "</source>\r\n";
+                $xml .= "\t\t\t\t\t<source>" . htmlspecialchars($source) . "</source>\r\n";
             }
             if ($year !== '') {
-                $xml .= "\t\t\t\t<year>" . htmlspecialchars($year) . "</year>\r\n";
+                $xml .= "\t\t\t\t\t<year>" . htmlspecialchars($year) . "</year>\r\n";
             }
 
             if (preg_match('/\b(\d+)\(([\d\-]+)\):(e\d+)\b/u', $cleanRef, $mp)) {
-                $xml .= "\t\t\t\t<volume>{$mp[1]}</volume>\r\n";
-                $xml .= "\t\t\t\t<issue>{$mp[2]}</issue>\r\n";
-                $xml .= "\t\t\t\t<elocation-id>{$mp[3]}</elocation-id>\r\n";
+                $xml .= "\t\t\t\t\t<volume>{$mp[1]}</volume>\r\n";
+                $xml .= "\t\t\t\t\t<issue>{$mp[2]}</issue>\r\n";
+                $xml .= "\t\t\t\t\t<elocation-id>{$mp[3]}</elocation-id>\r\n";
             } elseif (preg_match('/\b(\d+)\(([\d\-\s]+)\):(\d[\d\-]+)\b/u', $cleanRef, $mp)) {
                 $pages = $mp[3];
-                $xml .= "\t\t\t\t<volume>{$mp[1]}</volume>\r\n";
-                $xml .= "\t\t\t\t<issue>" . trim($mp[2]) . "</issue>\r\n";
-                $xml .= "\t\t\t\t<fpage>$pages</fpage>\r\n";
-                $xml .= "\t\t\t\t<lpage>$pages</lpage>\r\n";
+                $xml .= "\t\t\t\t\t<volume>{$mp[1]}</volume>\r\n";
+                $xml .= "\t\t\t\t\t<issue>" . trim($mp[2]) . "</issue>\r\n";
+                $xml .= "\t\t\t\t\t<fpage>$pages</fpage>\r\n";
+                $xml .= "\t\t\t\t\t<lpage>$pages</lpage>\r\n";
             } elseif (preg_match('/\b(\d+):(e\d+)\b/u', $cleanRef, $mp)) {
-                $xml .= "\t\t\t\t<volume>{$mp[1]}</volume>\r\n";
-                $xml .= "\t\t\t\t<elocation-id>{$mp[2]}</elocation-id>\r\n";
+                $xml .= "\t\t\t\t\t<volume>{$mp[1]}</volume>\r\n";
+                $xml .= "\t\t\t\t\t<elocation-id>{$mp[2]}</elocation-id>\r\n";
             } elseif (preg_match('/\b(\d+):(\d[\d\-]+)\b/u', $cleanRef, $mp)) {
                 $pages = $mp[2];
-                $xml .= "\t\t\t\t<volume>{$mp[1]}</volume>\r\n";
-                $xml .= "\t\t\t\t<fpage>$pages</fpage>\r\n";
-                $xml .= "\t\t\t\t<lpage>$pages</lpage>\r\n";
+                $xml .= "\t\t\t\t\t<volume>{$mp[1]}</volume>\r\n";
+                $xml .= "\t\t\t\t\t<fpage>$pages</fpage>\r\n";
+                $xml .= "\t\t\t\t\t<lpage>$pages</lpage>\r\n";
             }
         }
 
         if ($hasDoi && $pubType !== 'webpage' && preg_match('/10\.\d{4,9}\/\S+/u', $cleanRef, $md)) {
-            $xml .= "\t\t\t\t<pub-id pub-id-type=\"doi\">" . htmlspecialchars($md[0]) . "</pub-id>\r\n";
+            $xml .= "\t\t\t\t\t<pub-id pub-id-type=\"doi\">" . htmlspecialchars($md[0]) . "</pub-id>\r\n";
         }
 
-        $xml .= "\t\t\t</element-citation>\r\n";
+        $xml .= "\t\t\t\t</element-citation>\r\n";
         $xml .= "\t\t\t</ref>\r\n";
         return $xml;
     }
