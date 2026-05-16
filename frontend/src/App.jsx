@@ -170,7 +170,6 @@ function App() {
   const [metaVisible, setMetaVisible] = useState(false);
   const [resultVisible, setResultVisible] = useState(false);
   const [copyLabel, setCopyLabel] = useState('Copiar');
-  const [referenceXml, setReferenceXml] = useState('');
   const [manual, setManual] = useState(() => createEmptyManual());
 
   const showAlert = (message, type) => {
@@ -224,30 +223,7 @@ function App() {
     return () => window.clearTimeout(timer);
   }, [progress.pct]);
 
-  useEffect(() => {
-    // Carga el XML de referencia completo para reutilizarlo cuando el DOI corresponda al artículo 1851.
-    const controller = new AbortController();
-
-    const loadReferenceXml = async () => {
-      try {
-        const response = await fetch('/backend/1851-8265-scol-22-e5939(2).xml', { signal: controller.signal });
-        if (!response.ok) {
-          return;
-        }
-
-        const xml = await response.text();
-        if (xml.trim()) {
-          setReferenceXml(xml);
-        }
-      } catch {
-        // Si el archivo no es accesible, el generador usa el back por defecto.
-      }
-    };
-
-    loadReferenceXml();
-
-    return () => controller.abort();
-  }, []);
+  // Se eliminó la carga automática de un XML de referencia de producción.
 
   useEffect(() => {
     // En modo manual, cualquier cambio en formulario regenera el XML visible en tiempo real.
@@ -256,11 +232,11 @@ function App() {
     }
 
     const meta = collectManualMeta(manual);
-    setGeneratedXml(buildJatsFromMeta(meta, referenceXml));
+    setGeneratedXml(buildJatsFromMeta(meta));
     setGeneratedFilename(buildManualFilename(meta.articleTitle));
     setMetadata(meta);
     setMetaVisible(true);
-  }, [generatedMode, manual, resultVisible, referenceXml]);
+  }, [generatedMode, manual, resultVisible]);
 
   const resetPanels = () => {
     // Limpia paneles de salida para que la UI no mezcle resultados de archivos distintos.
@@ -351,7 +327,7 @@ function App() {
     await delay(150);
 
     try {
-      const xml = buildJatsFromMeta(meta, referenceXml);
+      const xml = buildJatsFromMeta(meta);
       setGeneratedXml(xml);
       setGeneratedFilename(buildManualFilename(meta.articleTitle));
       setMetadata(meta);
@@ -861,13 +837,9 @@ function collectManualMeta(manual) {
   };
 }
 
-function buildJatsFromMeta(meta, referenceXml = '') {
+function buildJatsFromMeta(meta) {
   const e = value => esc(String(value || ''));
   const doi = meta.doi || '';
-
-  if (doi === '10.18294/sc.2026.5939' && referenceXml) {
-    return referenceXml;
-  }
 
   const pubId = doi ? doi.split('/').slice(1).join('/') : 'XXXX';
   const year = meta.accepted?.match(/\d{4}/)?.[0] || meta.pubdate?.match(/\d{4}/)?.[0] || new Date().getFullYear();
