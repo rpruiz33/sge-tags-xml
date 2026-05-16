@@ -11,7 +11,7 @@ class DocxParser
     {
         $this->filePath = $filePath;
     }
-
+/** */
     public function extractLines()
     {
         if (!is_readable($this->filePath)) {
