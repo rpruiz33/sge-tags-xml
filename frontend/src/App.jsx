@@ -547,43 +547,7 @@ function App() {
             Metadatos manuales (edición rápida)
           </h2>
           <div className="manual-grid">
-            <div className="manual-row">
-              <label>Afiliaciones:</label>
-              <div className="manual-author-actions">
-                <button className="btn-action" type="button" onClick={handleAddManualAffiliation}>+ Afiliación</button>
-              </div>
-              <ul className="manual-affiliations">
-                {(manual.affiliations || []).map((affiliation, index) => (
-                  <li key={`${affiliation.id || 'aff'}-${index}`}>
-                    <span className="author-index">{index + 1}.</span>
-                    <input
-                      type="text"
-                      className="author-name"
-                      value={affiliation.original || ''}
-                      onChange={event => handleManualAffiliationChange(index, 'original', event.target.value)}
-                      placeholder="Institución / afiliación"
-                      aria-label={`Afiliación ${index + 1}`}
-                    />
-                    <input
-                      type="text"
-                      className="author-orcid"
-                      value={affiliation.email || ''}
-                      onChange={event => handleManualAffiliationChange(index, 'email', event.target.value)}
-                      placeholder="autor@institucion.edu"
-                      aria-label={`Email de afiliación ${index + 1}`}
-                    />
-                    <button
-                      className="btn-action author-remove"
-                      type="button"
-                      onClick={() => handleRemoveManualAffiliation(index)}
-                      aria-label={`Quitar afiliación ${index + 1}`}
-                    >
-                      Quitar
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
+            
             <div className="manual-row">
               <label>Autores:</label>
               <div className="manual-author-actions">
