@@ -279,7 +279,7 @@ function App() {
       const form = new FormData();
       form.append('file', currentFile);
 
-      const response = await fetch('/backend/convert.php', {
+      const response = await fetch('../backend/convert.php', {
         method: 'POST',
         body: form
       });
@@ -547,7 +547,6 @@ function App() {
             Metadatos manuales (edición rápida)
           </h2>
           <div className="manual-grid">
-            
             <div className="manual-row">
               <label>Autores:</label>
               <div className="manual-author-actions">
@@ -711,7 +710,6 @@ function App() {
             <div className="xml-wrap">
               <pre className="xml-output" id="xmlOutput">{generatedXml}</pre>
             </div>
-            <p className="xml-note">El cuerpo del artículo y las referencias bibliográficas deben completarse manualmente en el XML generado.</p>
           </section>
         ) : null}
       </main>
@@ -1089,17 +1087,6 @@ function buildBackXml(meta) {
       back += '\t\t\t\t</element-citation>\r\n';
       back += '\t\t\t</ref>\r\n';
     });
-  } else {
-    // Fallback for empty references
-    const fallbackCount = Number(meta.refCount || 1);
-    for (let i = 1; i <= fallbackCount; i++) {
-      back += `\t\t\t<ref id="B${i}">\r\n`;
-      back += `\t\t\t\t<label>${i}</label>\r\n`;
-      back += '\t\t\t\t<element-citation publication-type="journal">\r\n';
-      back += `\t\t\t\t\t<comment>[Completar referencia ${i} en formato JATS element-citation]</comment>\r\n`;
-      back += '\t\t\t\t</element-citation>\r\n';
-      back += '\t\t\t</ref>\r\n';
-    }
   }
   back += '\t\t</ref-list>\r\n';
 
@@ -1159,7 +1146,7 @@ function normalizeBodySections(sections) {
         return {
           title,
           secType: inferBodySecType(title),
-          paragraphs: ['[Completar con el contenido del manuscrito]'],
+          paragraphs: [],
           subsections: []
         };
       }
@@ -1208,10 +1195,9 @@ function renderBodySection(section, depth = 1) {
 
 function buildBodyXml(meta) {
   const sections = normalizeBodySections(meta?.bodySections || meta?.sections || []);
-  const indent = '\t';
 
   if (!sections.length) {
-    return '\t<body>\r\n\t\t<sec sec-type="intro">\r\n\t\t\t<title>Introducción</title>\r\n\t\t\t<p>[Completar con el contenido del manuscrito]</p>\r\n\t\t</sec>\r\n\t</body>\r\n';
+    return '\t<body>\r\n\t</body>\r\n';
   }
 
   let xml = '\t<body>\r\n';
