@@ -70,7 +70,7 @@ class DocxParser
             }
             $segments[] = $segment;
         }
-        return trim(implode('', $segments));
+        return ltrim(implode('', $segments));
     }
 
     private function parseTableNode($tbl, $xpath)
@@ -1908,11 +1908,14 @@ class DocxParser
         $xml .= $this->buildBackXml($meta);
 
         // Agrega contenido al texto acumulado en $xml.
-        $xml .= "</article>\r\n"; // Ensure CRLF
+        $xml .= "</article>"; // No tab, no trailing newline, matches production
 
         // Evita líneas en blanco extra antes del cierre de <front>.
         // Normaliza el texto con una expresión regular y lo guarda en $xml.
         $xml = preg_replace('/<\/article-meta>\r?\n(?:\t*\r?\n)+\t<\/front>\r?\n/', "</article-meta>\r\n\t</front>\r\n", $xml);
+
+        // Normaliza cualquier salto de línea suelto a CRLF para igualar la salida de producción.
+        $xml = preg_replace('/(?<!\r)\n/', "\r\n", $xml);
 
         // Devuelve el resultado final de esta parte del proceso.
         return $xml;
@@ -2072,7 +2075,7 @@ class DocxParser
             return $indent . $text . "\r\n";
         }
         // Detectar citas textuales (Blockquotes)
-        $isQuote = preg_match('/^“/u', trim(strip_tags($text)));
+        $isQuote = preg_match('/^[“"]/u', trim(strip_tags($text)));
         // Procesar cursivas y escapar XML
         $content = $this->escapeXmlWithItalic($text);
         // Normalizar múltiples espacios a uno solo (excepto dentro de tags)
@@ -2121,6 +2124,8 @@ class DocxParser
         }
         $content = preg_replace('/\s+([\.,;:\)])/u', '$1', $content);
         $content = preg_replace('/([\(\[]+)\s+/u', '$1', $content);
+        $content = preg_replace('/([“"«»\(]+)\s*(<xref ref-type="bibr" rid="B\d+"><sup>\d+<\/sup><\/xref>)/u', '<sup>$1</sup>$2', $content);
+        $content = preg_replace('/(<xref ref-type="bibr" rid="B\d+"><sup>\d+<\/sup><\/xref>)\s*\)/u', '$1<sup>)</sup>', $content);
 
         // Filtrar líneas que pertenecen al <back>, no al <body>
         $plain = trim(strip_tags($text));
@@ -2136,16 +2141,31 @@ class DocxParser
             return '';
         }
         if ($isQuote) {
-            return $indent . "<disp-quote>\r\n"
-                 . $indent . "\t<p>" . $content . "</p>\r\n"
-                 . $indent . "</disp-quote>\r\n";
+            if (preg_match('/<\/xref>\s*$/', $content)) {
+                // Termina con cita bibliográfica: </p> en línea separada
+                return $indent . "<disp-quote>\r\n"
+                     . $indent . "\t<p>" . $content . "\r\n"
+                     . $indent . "\t</p>\r\n"
+                     . $indent . "</disp-quote>\r\n";
+            } else {
+                // Termina con texto normal: </p> en la misma línea
+                return $indent . "<disp-quote>\r\n"
+                     . $indent . "\t<p>" . $content . "</p>\r\n"
+                     . $indent . "</disp-quote>\r\n";
+            }
         }
         return $indent . "<p>" . $content . "</p>\r\n";
     }
 
+    private function buildInlineUrlComment($url)
+    {
+        $safeUrl = htmlspecialchars(rtrim((string) $url, '.'), ENT_QUOTES | ENT_XML1, 'UTF-8');
+        return "<comment>Disponible en: <ext-link ext-link-type=\"uri\" xlink:href=\"$safeUrl\">$safeUrl</ext-link>\r\n\t\t\t\t\t</comment>";
+    }
+
     private function buildBackXml(array $meta)
     {
-        $xml = "\r\n\t<back>\r\n";
+        $xml = "\t<back>\r\n";
         $xml .= "\t\t<ref-list>\r\n";
         $xml .= "\t\t\t<title>Referencias bibliográficas</title>\r\n";
 
@@ -2159,7 +2179,7 @@ class DocxParser
         if ($count > 0) {
             foreach ($references as $i => $refText) {
                 $num = $i + 1;
-                $cleanRef = rtrim(trim(strip_tags($refText)));
+                $cleanRef = rtrim(trim(str_replace("\xc2\xa0", '', strip_tags($refText))));
                 $cleanRef = preg_replace('/^\s*\d+\.\s*/u', '', $cleanRef);
                 $xml .= $this->buildReferenceXmlBlock($num, $cleanRef);
             }
@@ -2233,28 +2253,36 @@ class DocxParser
         // Construir mixed-citation con URL en comentario para webpages y proyectos de ley.
         $mixedText = $this->escapeXmlWithItalic($cleanRef);
         if (($isWebpage || $isSpecialLegislativeBook || $forcedPubType === 'webpage') && ($hasUrl || $forcedUrl !== '') && preg_match('/(https?:\/\/\S+)/i', $cleanRef, $mu)) {
-            $u = htmlspecialchars(rtrim($mu[1], '.'), ENT_QUOTES | ENT_XML1, 'UTF-8');
-            $urlBlock = "Disponible en:\r\n<comment>\r\nDisponible en:\r\n<ext-link ext-link-type=\"uri\" xlink:href=\"" . $u . "\">" . $u . "</ext-link>\r\n</comment>";
+            $u = rtrim($mu[1], '.');
+            $safeU = htmlspecialchars(rtrim($u, '.'), ENT_QUOTES | ENT_XML1, 'UTF-8');
+            $commentBlock = "<comment>Disponible en: <ext-link ext-link-type=\"uri\" xlink:href=\"$safeU\">$safeU</ext-link>\r\n\t\t\t\t\t</comment>";
+            // Eliminar primero el prefijo "Disponible en:" del texto plano para evitar duplicación,
+            // luego reemplazar la URL por el bloque <comment>.
+            $mixedText = preg_replace('/Disponible en:\s*/iu', '', $mixedText, 1);
             $mixedText = preg_replace(
-                '/(Disponible en:\s*)?' . preg_quote(htmlspecialchars(rtrim($mu[1], '.'), ENT_QUOTES | ENT_XML1, 'UTF-8'), '/') . '/u',
-                $urlBlock,
+                '/' . preg_quote($safeU, '/') . '/u',
+                $commentBlock,
                 $mixedText,
                 1
             );
             if (strpos($mixedText, '<comment>') === false) {
-                $mixedText .= "\r\n" . $urlBlock;
+                $mixedText = trim($mixedText) . ' ' . $commentBlock;
             }
         }
         if ($forcedPubType === 'webpage' && $forcedUrl !== '') {
-            $mixedText = preg_replace(
-                '/(Disponible en:\s*)(<comment>.*?<\/comment>)?/su',
-                'Disponible en:',
-                $mixedText,
-                1
-            );
-            $mixedText = trim(rtrim($mixedText)) . "\r\nDisponible en:\r\n<comment>\r\nDisponible en:\r\n<ext-link ext-link-type=\"uri\" xlink:href=\"" . $forcedUrl . "\">" . $forcedUrl . "</ext-link>\r\n</comment>";
+            $mixedText = preg_replace('/(?:Disponible en:\s*)?<comment>.*?<\/comment>/su', '', $mixedText, 1);
+            $safeForced = htmlspecialchars(rtrim($forcedUrl, '.'), ENT_QUOTES | ENT_XML1, 'UTF-8');
+            $commentBlock = "<comment>Disponible en: <ext-link ext-link-type=\"uri\" xlink:href=\"$safeForced\">$safeForced</ext-link>\r\n\t\t\t\t\t</comment>";
+            $mixedText = trim($mixedText) . ' ' . $commentBlock;
         }
-        $xml .= "\t\t\t\t<mixed-citation>$num. " . rtrim($mixedText) . "</mixed-citation>\r\n";
+        $mixedContent = trim($mixedText);
+        // Eliminar NBSP (U+00A0) que puedan haber quedado del DOCX
+        $mixedContent = str_replace("\xc2\xa0", '', $mixedContent);
+        if (strpos($mixedContent, '<comment>') !== false) {
+            $xml .= "\t\t\t\t<mixed-citation>$num. " . $mixedContent . "\r\n\t\t\t\t</mixed-citation>\r\n";
+        } else {
+            $xml .= "\t\t\t\t<mixed-citation>$num. " . $mixedContent . "</mixed-citation>\r\n";
+        }
 
         $authorPart = '';
         $rest = $cleanRef;
@@ -2320,10 +2348,7 @@ class DocxParser
                 }
                 if (preg_match('/https?:\/\/\S+/i', $cleanRef, $mu)) {
                     $u = rtrim($mu[0], '.');
-                    $xml .= "\t\t\t\t\t<comment>\r\n";
-                    $xml .= "\t\t\t\t\t\tDisponible en:\r\n";
-                    $xml .= "\t\t\t\t\t\t<ext-link ext-link-type=\"uri\" xlink:href=\"" . htmlspecialchars($u) . "\">" . htmlspecialchars($u) . "</ext-link>\r\n";
-                    $xml .= "\t\t\t\t\t</comment>\r\n";
+                    $xml .= "\t\t\t\t\t" . $this->buildInlineUrlComment($u) . "\r\n";
                 }
             } else {
             // Extraer Ciudad: Editorial; año desde el final de la referencia
@@ -2374,10 +2399,7 @@ class DocxParser
             }
             if (preg_match('/https?:\/\/\S+/i', $cleanRef, $mu)) {
                 $u = rtrim($mu[0], '.');
-                $xml .= "\t\t\t\t\t<comment>\r\n";
-                $xml .= "\t\t\t\t\t\tDisponible en:\r\n";
-                $xml .= "\t\t\t\t\t\t<ext-link ext-link-type=\"uri\" xlink:href=\"" . htmlspecialchars($u) . "\">" . htmlspecialchars($u) . "</ext-link>\r\n";
-                $xml .= "\t\t\t\t\t</comment>\r\n";
+                $xml .= "\t\t\t\t\t" . $this->buildInlineUrlComment($u) . "\r\n";
             }
         } else {
             $source = '';
@@ -2562,18 +2584,18 @@ class DocxParser
             $authorText = preg_replace('/\s*et\s*al\b/i', '', $authorText);
         }
 
-        // Split by comma, semicolon, 'and', 'y'
+        // Separar por coma, punto y coma, 'and' y 'y'.
         $parts = preg_split('/\s*(?:,|;|\band\b|\by\b)\s*/iu', trim($authorText));
         $parts = array_filter(array_map('trim', $parts));
 
         foreach ($parts as $p) {
             if ($p === '') continue;
             
-            // Try to parse "Surname, Given Names" or "Given Names Surname"
-            if (preg_match('/^([\p{L}\p{M}\s\-\']+,)\s*([\p{L}\p{M}\s\-\'\.]+)$/u', $p, $m)) { // Surname, Given Names
+            // Intentar interpretar "Apellido, Nombre" o "Nombre Apellido".
+            if (preg_match('/^([\p{L}\p{M}\s\-\']+,)\s*([\p{L}\p{M}\s\-\'\.]+)$/u', $p, $m)) { // Apellido, Nombre
                 $surname = trim($m[1], ',');
                 $given = $m[2];
-            } elseif (preg_match('/^([\p{L}\p{M}\s\-\'\.]+\s+[\p{L}\p{M}\s\-\'\.]+)$/u', $p, $m)) { // Given Names Surname (simple case)
+            } elseif (preg_match('/^([\p{L}\p{M}\s\-\'\.]+\s+[\p{L}\p{M}\s\-\'\.]+)$/u', $p, $m)) { // Nombre Apellido (caso simple)
                 $tokens = preg_split('/\s+/u', $p);
                 if (count($tokens) > 1) {
                     // Detectar el formato "Apellido Inicial(es)" donde el último token son iniciales (1-3 letras, posiblemente con puntos).
@@ -2594,11 +2616,11 @@ class DocxParser
                     $surname = $p;
                     $given = '';
                 }
-            } elseif (preg_match('/^([\p{L}\p{M}\s\-\']+)$/u', $p, $m)) { // Single name, assume surname
+            } elseif (preg_match('/^([\p{L}\p{M}\s\-\']+)$/u', $p, $m)) { // Un solo nombre, asumir apellido
                 $surname = $m[1];
                 $given = '';
             } else {
-                // Fallback for more complex cases or initials
+                // Recurso alternativo para casos más complejos o con iniciales.
                 $tokens = preg_split('/\s+/u', $p);
                 if (count($tokens) > 1) {
                     $lastToken = end($tokens);
@@ -2616,7 +2638,7 @@ class DocxParser
                 }
             }
             
-            // Ensure surname and given names are not empty
+            // Asegurar que apellido y nombres no queden vacíos.
             $res['authors'][] = ['surname' => trim($surname), 'given' => trim($given)];
         }
 
