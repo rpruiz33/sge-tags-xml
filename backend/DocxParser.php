@@ -70,7 +70,7 @@ class DocxParser
             }
             $segments[] = $segment;
         }
-        return ltrim(implode('', $segments));
+        return trim(implode('', $segments));
     }
 
     private function parseTableNode($tbl, $xpath)
@@ -1195,15 +1195,6 @@ class DocxParser
          * Todo el contenido entre dos títulos se agrupa como párrafos de esa sección.
          */
         // Secciones: detección de títulos y captura de párrafos del cuerpo.
-        $standardSections = [
-            'Introducción', 'Metodología', 'Métodos', 'Resultados', 'Discusión', 'Conclusiones',
-            'Introduction', 'Methods', 'Results', 'Discussion', 'Conclusions',
-            // Variantes adicionales detectadas en artículos SciELO/SPS
-            'Resultado y discusiones', 'Resultados y discusión', 'Resultados y discusiones',
-            'Consideraciones finales', 'Consideraciones Finales',
-            'Cuidados paliativos: sentidos y atribuciones',
-            'Instrumentos y mecanismos de acción para la inversión de las directivas anticipadas de voluntad',
-        ];
         $meta['bodySections'] = [];
         $meta['sections'] = [];
         $currentSec = null;
@@ -1215,12 +1206,10 @@ class DocxParser
 
             $isTitle = false;
             // Permitir títulos de hasta 100 caracteres para capturar títulos de subsección largos
-            if (mb_strlen($lineTrim) < 100) {
-                foreach ($standardSections as $s) {
-                    if (strcasecmp($lineTrim, $s) === 0) {
-                        $isTitle = true;
-                        break;
-                    }
+            if (mb_strlen($lineTrim) < 140) {
+                $isTitle = $this->isBodySectionHeading($lineTrim);
+                if (!$isTitle && $inBody && $currentSec && $this->looksLikeSectionTitle($lineTrim)) {
+                    $isTitle = true;
                 }
             }
 
@@ -1935,13 +1924,6 @@ class DocxParser
         $sections = $meta['bodySections'] ?? [];
         $xml = "\t<body>\r\n";
 
-        // Títulos que van como sub-secciones dentro de results|discussion
-        $resultsDiscussionTitles = [
-            'resultado y discusiones', 'resultados y discusión', 'resultados y discusiones', 'resultados',
-            'discusión', 'results', 'discussion', 'results and discussion',
-            'cuidados paliativos: sentidos y atribuciones',
-            'instrumentos y mecanismos de acción para la inversión de las directivas anticipadas de voluntad',
-        ];
         // Títulos de conclusión que generan su propia <sec>
         $conclusionTitles = ['consideraciones finales', 'conclusiones', 'conclusions', 'conclusión', 'consideraciones finales'];
 
@@ -1965,18 +1947,22 @@ class DocxParser
                 'other'            => [],
             ];
 
+            $inResultsDiscussion = false;
             foreach ($sections as $sec) {
                 $normalized = mb_strtolower(trim($sec['title']));
                 if (preg_match('/introducci[oó]n|introduction/u', $normalized)) {
                     $grouped['intro'][] = $sec;
+                    $inResultsDiscussion = false;
                 } elseif (preg_match('/metodolog[ií]a|m[eé]todos|methods/u', $normalized)) {
                     $grouped['methods'][] = $sec;
+                    $inResultsDiscussion = false;
                 } elseif (in_array($normalized, $conclusionTitles, true) || preg_match('/conclus|consideraciones\s+finales/u', $normalized)) {
                     $grouped['conclusions'][] = $sec;
-                } elseif (in_array($normalized, $resultsDiscussionTitles, true)
-                    || preg_match('/resultado|discusi[oó]n|results?|discussion/u', $normalized)
-                    || preg_match('/cuidados paliativos|instrumentos y mecanismos/u', $normalized)
-                ) {
+                    $inResultsDiscussion = false;
+                } elseif ($this->isResultsDiscussionHeading($normalized)) {
+                    $grouped['results_children'][] = $sec;
+                    $inResultsDiscussion = true;
+                } elseif ($inResultsDiscussion) {
                     $grouped['results_children'][] = $sec;
                 } else {
                     $grouped['other'][] = $sec;
@@ -2005,11 +1991,9 @@ class DocxParser
 
             // Results|Discussion con sub-secciones hijas
             if (!empty($grouped['results_children'])) {
-                // La primera entrada puede ser la sección padre (ej. "Resultado y discusiones")
-                // Las demás son sub-secciones (ej. "Cuidados paliativos...", "Instrumentos...")
                 $firstSec = $grouped['results_children'][0];
                 $firstNorm = mb_strtolower(trim($firstSec['title']));
-                $isParent = preg_match('/resultado|discusi[oó]n|results?|discussion/u', $firstNorm);
+                $isParent = $this->isResultsDiscussionHeading($firstNorm);
 
                 $xml .= "\t\t<sec sec-type=\"results|discussion\">\r\n";
                 if ($isParent) {
@@ -2124,8 +2108,8 @@ class DocxParser
         }
         $content = preg_replace('/\s+([\.,;:\)])/u', '$1', $content);
         $content = preg_replace('/([\(\[]+)\s+/u', '$1', $content);
-        $content = preg_replace('/([“"«»\(]+)\s*(<xref ref-type="bibr" rid="B\d+"><sup>\d+<\/sup><\/xref>)/u', '<sup>$1</sup>$2', $content);
-        $content = preg_replace('/(<xref ref-type="bibr" rid="B\d+"><sup>\d+<\/sup><\/xref>)\s*\)/u', '$1<sup>)</sup>', $content);
+        // Eliminar espacios en blanco finales del contenido del párrafo
+        $content = rtrim($content);
 
         // Filtrar líneas que pertenecen al <back>, no al <body>
         $plain = trim(strip_tags($text));
@@ -2161,6 +2145,50 @@ class DocxParser
     {
         $safeUrl = htmlspecialchars(rtrim((string) $url, '.'), ENT_QUOTES | ENT_XML1, 'UTF-8');
         return "<comment>Disponible en: <ext-link ext-link-type=\"uri\" xlink:href=\"$safeUrl\">$safeUrl</ext-link>\r\n\t\t\t\t\t</comment>";
+    }
+
+    private function isBodySectionHeading($title)
+    {
+        $normalized = mb_strtolower(trim((string)$title));
+        if ($normalized === '') {
+            return false;
+        }
+
+        if (preg_match('/introducci[oó]n|introduction/u', $normalized)) return true;
+        if (preg_match('/metodolog[ií]a|m[eé]todos|methods/u', $normalized)) return true;
+        if ($this->isResultsDiscussionHeading($normalized)) return true;
+        if (preg_match('/conclus|consideraciones\s+finales/u', $normalized)) return true;
+
+        return false;
+    }
+
+    private function looksLikeSectionTitle($title)
+    {
+        $normalized = trim((string)$title);
+        if ($normalized === '' || mb_strlen($normalized) > 140) {
+            return false;
+        }
+        if (preg_match('/[.!?]$/u', $normalized)) {
+            return false;
+        }
+        if (preg_match('/^(10\.\d{4,9}\/|https?:\/\/|[\w.%-]+@[\w.-]+\.[A-Za-z]{2,})/iu', $normalized)) {
+            return false;
+        }
+
+        $wordCount = preg_match_all('/\S+/u', $normalized);
+        if ($wordCount < 3 || $wordCount > 18) {
+            return false;
+        }
+
+        return (bool)preg_match('/^[A-ZÁÉÍÓÚÑ]/u', $normalized);
+    }
+
+    private function isResultsDiscussionHeading($title)
+    {
+        $normalized = mb_strtolower(trim((string)$title));
+        return (bool)preg_match('/\b(resultado(?:s)?|results?|discusi[oó]n|discussion)\b/u', $normalized)
+            || (bool)preg_match('/results?\s+and\s+discussion/u', $normalized)
+            || (bool)preg_match('/resultado(?:s)?\s+y\s+discusi[oó]n(?:es)?/u', $normalized);
     }
 
     private function buildBackXml(array $meta)
@@ -2253,8 +2281,8 @@ class DocxParser
         // Construir mixed-citation con URL en comentario para webpages y proyectos de ley.
         $mixedText = $this->escapeXmlWithItalic($cleanRef);
         if (($isWebpage || $isSpecialLegislativeBook || $forcedPubType === 'webpage') && ($hasUrl || $forcedUrl !== '') && preg_match('/(https?:\/\/\S+)/i', $cleanRef, $mu)) {
-            $u = rtrim($mu[1], '.');
-            $safeU = htmlspecialchars(rtrim($u, '.'), ENT_QUOTES | ENT_XML1, 'UTF-8');
+            $u = rtrim(trim($mu[1]), '.');
+            $safeU = htmlspecialchars(rtrim(trim($u), '.'), ENT_QUOTES | ENT_XML1, 'UTF-8');
             $commentBlock = "<comment>Disponible en: <ext-link ext-link-type=\"uri\" xlink:href=\"$safeU\">$safeU</ext-link>\r\n\t\t\t\t\t</comment>";
             // Eliminar primero el prefijo "Disponible en:" del texto plano para evitar duplicación,
             // luego reemplazar la URL por el bloque <comment>.
@@ -2347,7 +2375,7 @@ class DocxParser
                     $xml .= "\t\t\t\t\t<date-in-citation content-type=\"access-date\"$isoAttr>citado {$accessRaw}</date-in-citation>\r\n";
                 }
                 if (preg_match('/https?:\/\/\S+/i', $cleanRef, $mu)) {
-                    $u = rtrim($mu[0], '.');
+                    $u = rtrim(trim($mu[0]), '.');
                     $xml .= "\t\t\t\t\t" . $this->buildInlineUrlComment($u) . "\r\n";
                 }
             } else {
@@ -2398,7 +2426,7 @@ class DocxParser
                 $xml .= "\t\t\t\t\t<date-in-citation content-type=\"access-date\"$isoAttr>citado {$accessRaw}</date-in-citation>\r\n";
             }
             if (preg_match('/https?:\/\/\S+/i', $cleanRef, $mu)) {
-                $u = rtrim($mu[0], '.');
+                $u = rtrim(trim($mu[0]), '.');
                 $xml .= "\t\t\t\t\t" . $this->buildInlineUrlComment($u) . "\r\n";
             }
         } else {
