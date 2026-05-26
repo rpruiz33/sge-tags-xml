@@ -1221,8 +1221,8 @@ class DocxParser
                 continue;
             }
 
-            // Si llegamos a Referencias, dejamos de capturar párrafos para el cuerpo
-            if (preg_match('/^(Referencias bibliogr(?:a?ficas)?|Referencias|References?)\b/i', $lineTrim)) {
+            // Si llegamos a Referencias o secciones del back, dejamos de capturar párrafos para el cuerpo
+            if (preg_match('/^(Referencias bibliogr(?:a?ficas)?|Referencias|References?|Financiamiento|Conflicto de Intereses|Contribuci[óo]n autoral)\b/iu', $lineTrim)) {
                 $inBody = false;
                 if ($currentSec) {
                     $meta['bodySections'][] = $currentSec;
@@ -2108,12 +2108,14 @@ class DocxParser
         }
         $content = preg_replace('/\s+([\.,;:\)])/u', '$1', $content);
         $content = preg_replace('/([\(\[]+)\s+/u', '$1', $content);
+        // Eliminar <sup> que solo contengan paréntesis o puntuación espurios tras el procesamiento de xrefs
+        $content = preg_replace('/<sup>[\)\(]+<\/sup>/u', '', $content);
         // Eliminar espacios en blanco finales del contenido del párrafo
         $content = rtrim($content);
 
         // Filtrar líneas que pertenecen al <back>, no al <body>
         $plain = trim(strip_tags($text));
-        if (preg_match('/^(Financiamiento|Conflicto de Intereses|Contribuci[óo]n autoral)\s*$/iu', $plain)) {
+        if (preg_match('/^(Financiamiento|Conflicto de Intereses|Contribuci[óo]n autoral|Conflicto de Intereses\s*y\s*Contribuci[óo]n autoral)\s*$/iu', $plain)) {
             return '';
         }
         // Filtrar también párrafos de contenido de esas secciones que caen en el body
@@ -2284,9 +2286,9 @@ class DocxParser
             $u = rtrim(trim($mu[1]), '.');
             $safeU = htmlspecialchars(rtrim(trim($u), '.'), ENT_QUOTES | ENT_XML1, 'UTF-8');
             $commentBlock = "<comment>Disponible en: <ext-link ext-link-type=\"uri\" xlink:href=\"$safeU\">$safeU</ext-link>\r\n\t\t\t\t\t</comment>";
-            // Eliminar primero el prefijo "Disponible en:" del texto plano para evitar duplicación,
+            // Eliminar TODAS las ocurrencias del prefijo "Disponible en:" del texto plano para evitar duplicación,
             // luego reemplazar la URL por el bloque <comment>.
-            $mixedText = preg_replace('/Disponible en:\s*/iu', '', $mixedText, 1);
+            $mixedText = preg_replace('/Disponible en:\s*/iu', '', $mixedText);
             $mixedText = preg_replace(
                 '/' . preg_quote($safeU, '/') . '/u',
                 $commentBlock,
@@ -2306,6 +2308,8 @@ class DocxParser
         $mixedContent = trim($mixedText);
         // Eliminar NBSP (U+00A0) que puedan haber quedado del DOCX
         $mixedContent = str_replace("\xc2\xa0", '', $mixedContent);
+        // Eliminar espacio suelto inmediatamente antes del <comment> para evitar " <comment>"
+        $mixedContent = preg_replace('/\s+(<comment>)/u', ' $1', $mixedContent);
         if (strpos($mixedContent, '<comment>') !== false) {
             $xml .= "\t\t\t\t<mixed-citation>$num. " . $mixedContent . "\r\n\t\t\t\t</mixed-citation>\r\n";
         } else {
