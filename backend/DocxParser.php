@@ -141,7 +141,7 @@ class DocxParser
             // Define el valor inicial del metadato "nov".
             'nov' => '11', 'noviembre' => '11',
             // Define el valor inicial del metadato "dic".
-            'dic' => '12', 'dez' => '12', 'diciembre' => '12'
+            'dic' => '12', 'diciembre' => '12'
         // Cierra el arreglo definido en las líneas anteriores.
         ];
 
