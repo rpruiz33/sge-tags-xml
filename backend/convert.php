@@ -47,7 +47,8 @@ try {
         // Incluye los metadatos detectados para que el frontend pueda mostrarlos o depurarlos.
         'metadata' => $meta,
         // Devuelve el nombre del archivo sin extensión para sugerir un nombre de descarga.
-        'filename' => pathinfo($name, PATHINFO_FILENAME)
+        // Eliminar espacios en blanco del nombre sugerido para la descarga
+        'filename' => preg_replace('/\s+/', '', pathinfo($name, PATHINFO_FILENAME))
     ]);
 } catch (Throwable $e) {
     // Si algo falla en la subida, parseo o generación, responde como error de solicitud.
