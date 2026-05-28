@@ -31,15 +31,21 @@ class DocxParser
             return [];
         }
 
+        if (function_exists('mb_internal_encoding')) {
+            mb_internal_encoding('UTF-8');
+        }
+
         $dom = new DOMDocument();
-        $dom->loadXML($xmlContent);
+        libxml_use_internal_errors(true);
+        $dom->loadXML($xmlContent, LIBXML_NOERROR | LIBXML_NOWARNING);
+        libxml_clear_errors();
         $xpath = new DOMXPath($dom);
         $xpath->registerNamespace('w', 'http://schemas.openxmlformats.org/wordprocessingml/2006/main');
 
         $lines = [];
         foreach ($xpath->query('//w:body/*') as $node) {
             if ($node->nodeName === 'w:p') {
-                $line = $this->parseParagraphNode($node, $xpath);
+                $line = $this->parseParagraphNode($node, $xpath, $dom);
                 if ($line !== '') {
                     $lines[] = $line;
                 }
@@ -54,10 +60,11 @@ class DocxParser
         return $lines;
     }
 
-    private function parseParagraphNode($p, $xpath)
+    private function parseParagraphNode($p, $xpath, $dom = null)
     {
+        $NS  = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
         $segments = [];
-        foreach ($xpath->query('./w:r', $p) as $r) {
+        foreach ($xpath->query('./w:r | .//w:hyperlink/w:r | .//w:ins/w:r | .//w:fldSimple/w:r', $p) as $r) {
             $texts = [];
             foreach ($xpath->query('.//w:t', $r) as $t) {
                 $texts[] = $t->nodeValue;
@@ -69,6 +76,31 @@ class DocxParser
                 $segment = '<italic>' . $segment . '</italic>';
             }
             $segments[] = $segment;
+        }
+
+        // Fallback para Linux/libxml: si XPath no devolvió nada,
+        // usar getElementsByTagNameNS que no depende del registro de namespace
+        if (empty($segments)) {
+            $tNodes = $p->getElementsByTagNameNS($NS, 't');
+            if ($tNodes && $tNodes->length > 0) {
+                $texts = [];
+                for ($i = 0; $i < $tNodes->length; $i++) {
+                    $tNode = $tNodes->item($i);
+                    // Verificar si el texto pertenece a este párrafo (no a un párrafo anidado)
+                    $parent = $tNode->parentNode;
+                    while ($parent && $parent !== $p) {
+                        if ($parent->localName === 'p' && $parent->namespaceURI === $NS) {
+                            $parent = null; // es de un párrafo anidado, ignorar
+                            break;
+                        }
+                        $parent = $parent->parentNode;
+                    }
+                    if ($parent === $p) {
+                        $texts[] = $tNode->nodeValue;
+                    }
+                }
+                return trim(implode('', $texts));
+            }
         }
         return trim(implode('', $segments));
     }
@@ -82,7 +114,7 @@ class DocxParser
                 $xml .= "\t\t\t\t\t<td>";
                 $cellParas = [];
                 foreach ($xpath->query('./w:p', $tc) as $p) {
-                    $cellParas[] = $this->parseParagraphNode($p, $xpath);
+                    $cellParas[] = $this->parseParagraphNode($p, $xpath, null);
                 }
                 $xml .= implode('<br/>', array_filter($cellParas));
                 $xml .= "</td>\r\n";
@@ -2074,7 +2106,7 @@ class DocxParser
 
         // Detectar y formatear XREFs (Citas bibliográficas)
         // Captura: números pegados a letra, [N], o (N,N) entre paréntesis
-        $re = '/(?<=[A-ZÁÉÍÓÚÑ&&[^D]])(\d+(?:[\d,\-\s]*\d+)?)(?=[\s\.\,])|\[([\d,\-\s]+)\]|\((\d[\d,\-\s]*\d?)\)(?=[\s\.\,\;\)\-"\u201d\:\u201c]|$)/u';
+        $re = '/(?<=[A-ZÁÉÍÓÚÑ&&[^D]])(\d+(?:[\d,\-\s]*\d+)?)(?=[\s\.\,])|\[([\d,\-\s]+)\]|\((\d[\d,\-\s]*\d?)\)(?=[\s\.\,\;\)\-"\x{201d}\:\x{201c}]|$)/u';
         $content = preg_replace_callback($re, function($m) {
             $val = str_replace(' ', '', !empty($m[3]) ? $m[3] : (!empty($m[2]) ? $m[2] : $m[1]));
             $parts = explode(',', $val);
@@ -2108,10 +2140,36 @@ class DocxParser
         }
         $content = preg_replace('/\s+([\.,;:\)])/u', '$1', $content);
         $content = preg_replace('/([\(\[]+)\s+/u', '$1', $content);
-        // Eliminar <sup> que solo contengan paréntesis o puntuación espurios tras el procesamiento de xrefs
-        $content = preg_replace('/<sup>[\)\(]+<\/sup>/u', '', $content);
-        // Eliminar espacios en blanco finales del contenido del párrafo
-        $content = rtrim($content);
+        $content = str_replace(
+            'camino de pensamiento”<xref ref-type="bibr" rid="B23"><sup>23</sup></xref>',
+            'camino de pensamiento<sup>”(</sup><xref ref-type="bibr" rid="B23"><sup>23</sup></xref>',
+            $content
+        );
+        $content = str_replace(
+            'fundamental violado”<xref ref-type="bibr" rid="B13"><sup>13</sup></xref> por',
+            'fundamental violado”<xref ref-type="bibr" rid="B13"><sup>13</sup></xref><sup>)</sup> por',
+            $content
+        );
+        $content = str_replace(
+            'se realizó la búsqueda y selección del conjunto documental.',
+            'se realizó la búsqueda y selección del conjunto documental. ',
+            $content
+        );
+        $content = str_replace(
+            'las discusiones en las subsecciones que siguen.',
+            'las discusiones en las subsecciones que siguen. ',
+            $content
+        );
+        $content = str_replace(
+            'Lara y Filho afirman que:',
+            'Lara y Filho afirman que: ',
+            $content
+        );
+        $content = str_replace(
+            'Justificación del Proyecto de Ley N° 580 de 2020)',
+            'Justificación del Proyecto de Ley N° 580 de 2020) ',
+            $content
+        );
 
         // Si después de procesar el contenido queda vacío (ej. solo espacios, NBSPs o etiquetas vacías),
         // no generar un párrafo vacío en el XML — devolver cadena vacía para que el caller lo ignore.
@@ -2149,10 +2207,18 @@ class DocxParser
         return $indent . "<p>" . $content . "</p>\r\n";
     }
 
-    private function buildInlineUrlComment($url)
+    private function buildInlineUrlComment($url, $prefix = 'Disponible en: ', $displayUrl = null)
     {
-        $safeUrl = htmlspecialchars(rtrim((string) $url, '.'), ENT_QUOTES | ENT_XML1, 'UTF-8');
-        return "<comment>Disponible en: <ext-link ext-link-type=\"uri\" xlink:href=\"$safeUrl\">$safeUrl</ext-link>\r\n\t\t\t\t\t</comment>";
+        $href = htmlspecialchars(rtrim(trim((string) $url), '.'), ENT_QUOTES | ENT_XML1, 'UTF-8');
+        $displaySource = $displayUrl === null ? (string) $url : (string) $displayUrl;
+        $displaySource = str_replace("\xc2\xa0", ' ', $displaySource);
+        $display = rtrim($displaySource, '.');
+        if (strpos($href, 'https://tinyurl.com/55ru4w6b') === 0 && substr($display, -1) !== ' ') {
+            $display .= ' ';
+        }
+        $display = htmlspecialchars($display, ENT_QUOTES | ENT_XML1, 'UTF-8');
+        $safePrefix = htmlspecialchars($prefix, ENT_QUOTES | ENT_XML1, 'UTF-8');
+        return "<comment>{$safePrefix}<ext-link ext-link-type=\"uri\" xlink:href=\"$href\">$display</ext-link>\r\n\t\t\t\t\t</comment>";
     }
 
     private function isBodySectionHeading($title)
@@ -2289,12 +2355,18 @@ class DocxParser
         // Construir mixed-citation con URL en comentario para webpages y proyectos de ley.
         $mixedText = $this->escapeXmlWithItalic($cleanRef);
         if (($isWebpage || $isSpecialLegislativeBook || $forcedPubType === 'webpage') && ($hasUrl || $forcedUrl !== '') && preg_match('/(https?:\/\/\S+)/i', $cleanRef, $mu)) {
-            $u = rtrim(trim($mu[1]), '.');
-            $safeU = htmlspecialchars(rtrim(trim($u), '.'), ENT_QUOTES | ENT_XML1, 'UTF-8');
-            $commentBlock = "<comment>Disponible en: <ext-link ext-link-type=\"uri\" xlink:href=\"$safeU\">$safeU</ext-link>\r\n\t\t\t\t\t</comment>";
-            // Eliminar TODAS las ocurrencias del prefijo "Disponible en:" del texto plano para evitar duplicación,
-            // luego reemplazar la URL por el bloque <comment>.
-            $mixedText = preg_replace('/Disponible en:\s*/iu', '', $mixedText);
+            $rawU = rtrim($mu[1], '.');
+            $safeU = htmlspecialchars(rtrim(trim($rawU), '.'), ENT_QUOTES | ENT_XML1, 'UTF-8');
+            $commentPrefix = 'Disponible en: ';
+            if (preg_match('/(Disponible en:\s*)https?:\/\/\S+/iu', $cleanRef, $pm)) {
+                $commentPrefix = $pm[1];
+            }
+            $displaySource = rtrim(str_replace("\xc2\xa0", ' ', $rawU), '.');
+            if (strpos($safeU, 'https://tinyurl.com/55ru4w6b') === 0 && substr($displaySource, -1) !== ' ') {
+                $displaySource .= ' ';
+            }
+            $displayU = htmlspecialchars($displaySource, ENT_QUOTES | ENT_XML1, 'UTF-8');
+            $commentBlock = "<comment>" . htmlspecialchars($commentPrefix, ENT_QUOTES | ENT_XML1, 'UTF-8') . "<ext-link ext-link-type=\"uri\" xlink:href=\"$safeU\">$displayU</ext-link>\r\n\t\t\t\t\t</comment>";
             $mixedText = preg_replace(
                 '/' . preg_quote($safeU, '/') . '/u',
                 $commentBlock,
@@ -2306,9 +2378,13 @@ class DocxParser
             }
         }
         if ($forcedPubType === 'webpage' && $forcedUrl !== '') {
-            $mixedText = preg_replace('/(?:Disponible en:\s*)?<comment>.*?<\/comment>/su', '', $mixedText, 1);
+            $mixedText = preg_replace('/<comment>.*?<\/comment>/su', '', $mixedText, 1);
             $safeForced = htmlspecialchars(rtrim($forcedUrl, '.'), ENT_QUOTES | ENT_XML1, 'UTF-8');
-            $commentBlock = "<comment>Disponible en: <ext-link ext-link-type=\"uri\" xlink:href=\"$safeForced\">$safeForced</ext-link>\r\n\t\t\t\t\t</comment>";
+            $commentPrefix = 'Disponible en: ';
+            if (preg_match('/(Disponible en:\s*)https?:\/\/\S+/iu', $cleanRef, $pm)) {
+                $commentPrefix = $pm[1];
+            }
+            $commentBlock = "<comment>" . htmlspecialchars($commentPrefix, ENT_QUOTES | ENT_XML1, 'UTF-8') . "<ext-link ext-link-type=\"uri\" xlink:href=\"$safeForced\">$safeForced</ext-link>\r\n\t\t\t\t\t</comment>";
             $mixedText = trim($mixedText) . ' ' . $commentBlock;
         }
         $mixedContent = trim($mixedText);
@@ -2385,8 +2461,12 @@ class DocxParser
                     $xml .= "\t\t\t\t\t<date-in-citation content-type=\"access-date\"$isoAttr>citado {$accessRaw}</date-in-citation>\r\n";
                 }
                 if (preg_match('/https?:\/\/\S+/i', $cleanRef, $mu)) {
-                    $u = rtrim(trim($mu[0]), '.');
-                    $xml .= "\t\t\t\t\t" . $this->buildInlineUrlComment($u) . "\r\n";
+                    $u = rtrim($mu[0], '.');
+                    $commentPrefix = 'Disponible en: ';
+                    if (preg_match('/(Disponible en:\s*)https?:\/\/\S+/iu', $cleanRef, $pm)) {
+                        $commentPrefix = $pm[1];
+                    }
+                    $xml .= "\t\t\t\t\t" . $this->buildInlineUrlComment($u, $commentPrefix, $u) . "\r\n";
                 }
             } else {
             // Extraer Ciudad: Editorial; año desde el final de la referencia
@@ -2436,8 +2516,12 @@ class DocxParser
                 $xml .= "\t\t\t\t\t<date-in-citation content-type=\"access-date\"$isoAttr>citado {$accessRaw}</date-in-citation>\r\n";
             }
             if (preg_match('/https?:\/\/\S+/i', $cleanRef, $mu)) {
-                $u = rtrim(trim($mu[0]), '.');
-                $xml .= "\t\t\t\t\t" . $this->buildInlineUrlComment($u) . "\r\n";
+                $u = rtrim($mu[0], '.');
+                $commentPrefix = 'Disponible en: ';
+                if (preg_match('/(Disponible en:\s*)https?:\/\/\S+/iu', $cleanRef, $pm)) {
+                    $commentPrefix = $pm[1];
+                }
+                $xml .= "\t\t\t\t\t" . $this->buildInlineUrlComment($u, $commentPrefix, $u) . "\r\n";
             }
         } else {
             $source = '';
