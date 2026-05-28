@@ -2113,6 +2113,12 @@ class DocxParser
         // Eliminar espacios en blanco finales del contenido del párrafo
         $content = rtrim($content);
 
+        // Si después de procesar el contenido queda vacío (ej. solo espacios, NBSPs o etiquetas vacías),
+        // no generar un párrafo vacío en el XML — devolver cadena vacía para que el caller lo ignore.
+        if (trim(strip_tags(str_replace("\xc2\xa0", '', $content))) === '') {
+            return '';
+        }
+
         // Filtrar líneas que pertenecen al <back>, no al <body>
         $plain = trim(strip_tags($text));
         if (preg_match('/^(Financiamiento|Conflicto de Intereses|Contribuci[óo]n autoral|Conflicto de Intereses\s*y\s*Contribuci[óo]n autoral)\s*$/iu', $plain)) {
