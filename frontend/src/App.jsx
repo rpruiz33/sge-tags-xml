@@ -20,6 +20,11 @@ const createEmptyManual = () => ({
   conflict: '',
   contributionsText: '',
   refCount: 0,
+  publisherId: '',
+  articleCategory: 'research-article',
+  articleCategoryLabel: 'Artículo de investigación',
+  licenseHref: 'https://creativecommons.org/licenses/by/4.0/',
+  licenseText: 'Este es un artículo publicado en acceso abierto bajo una licencia Creative Commons',
   journalTitle: '',
   journalAbbrev: '',
   publisher: '',
@@ -100,7 +105,11 @@ function buildManualFromMetadata(metadata) {
       .map((affiliation, index) => ({
         id: `aff${index + 1}`,
         original: String(typeof affiliation === 'string' ? affiliation : (affiliation?.original || '')).trim(),
-        email: String(typeof affiliation === 'string' ? '' : (affiliation?.email || metadata.affiliations_email?.[index] || '')).trim()
+        email: String(
+          typeof affiliation === 'string'
+            ? (metadata.affiliations_email?.[index] || '')
+            : (affiliation?.email || metadata.affiliations_email?.[index] || '')
+        ).trim()
       }))
       .filter(affiliation => affiliation.original || affiliation.email)
     : [];
@@ -114,6 +123,11 @@ function buildManualFromMetadata(metadata) {
     : [];
 
   const pub = splitPubDate(metadata.pubdate);
+  const derivedPublisherId = String(metadata.publisherId || metadata['publisher-id'] || '').trim() || (
+    String(metadata.doi || '').includes('/')
+      ? String(metadata.doi || '').split('/').slice(1).join('/')
+      : ''
+  );
 
   // Lleva los metadatos detectados al formulario manual para permitir correccion inmediata.
   return {
@@ -152,6 +166,21 @@ function buildManualFromMetadata(metadata) {
     revised: String(metadata.revised || '').trim(),
     accepted: String(metadata.accepted || '').trim(),
     funding: fundingList,
+    fundingStatement,
+    references: Array.isArray(metadata.references) ? metadata.references : [],
+    sections: Array.isArray(metadata.sections) ? metadata.sections : [],
+    affiliations_norm: Array.isArray(metadata.affiliations_norm) ? metadata.affiliations_norm : [],
+    affiliations_orgdiv1: Array.isArray(metadata.affiliations_orgdiv1) ? metadata.affiliations_orgdiv1 : [],
+    affiliations_orgdiv2: Array.isArray(metadata.affiliations_orgdiv2) ? metadata.affiliations_orgdiv2 : [],
+    affiliations_orgname: Array.isArray(metadata.affiliations_orgname) ? metadata.affiliations_orgname : [],
+    affiliations_state: Array.isArray(metadata.affiliations_state) ? metadata.affiliations_state : [],
+    affiliations_country: Array.isArray(metadata.affiliations_country) ? metadata.affiliations_country : [],
+    affiliations_country_name: Array.isArray(metadata.affiliations_country_name) ? metadata.affiliations_country_name : [],
+    publisherId: derivedPublisherId,
+    articleCategory: String(metadata.articleCategory || 'research-article').trim() || 'research-article',
+    articleCategoryLabel: String(metadata.articleCategoryLabel || metadata.articleCategoryText || 'Artículo de investigación').trim() || 'Artículo de investigación',
+    licenseHref: String(metadata.licenseHref || 'https://creativecommons.org/licenses/by/4.0/').trim() || 'https://creativecommons.org/licenses/by/4.0/',
+    licenseText: String(metadata.licenseText || 'Este es un artículo publicado en acceso abierto bajo una licencia Creative Commons').trim() || 'Este es un artículo publicado en acceso abierto bajo una licencia Creative Commons',
     authors: authors.length ? authors : base.authors,
     affiliations: affiliations.length ? affiliations : base.affiliations
   };
@@ -226,14 +255,13 @@ function App() {
   // Se eliminó la carga automática de un XML de referencia de producción.
 
   useEffect(() => {
-    // En modo manual, cualquier cambio en formulario regenera el XML visible en tiempo real.
-    if (generatedMode !== 'manual' || !resultVisible) {
+    // Solo el modo local usa el generador simplificado del navegador.
+    if (generatedMode !== 'local-manual' || !resultVisible) {
       return;
     }
 
     const meta = collectManualMeta(manual);
     setGeneratedXml(buildJatsFromMeta(meta));
-    setGeneratedFilename(buildManualFilename(meta.articleTitle));
     setMetadata(meta);
     setMetaVisible(true);
   }, [generatedMode, manual, resultVisible]);
@@ -317,24 +345,55 @@ function App() {
     }
   };
 
-  const handleManualGenerate = async () => {
-    // Flujo manual: no depende del backend y construye XML local a partir de los inputs.
-    const meta = collectManualMeta(manual);
+  const rebuildXmlOnServer = async meta => {
+    const response = await fetch('../backend/convert.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'rebuild',
+        metadata: normalizeMetaForServer(meta),
+        filename: generatedFilename || 'documento'
+      })
+    });
 
-    setGeneratedMode('manual');
+    const raw = await response.text();
+    let data;
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      throw new Error('Respuesta invalida del servidor al regenerar el XML');
+    }
+    if (!response.ok || !data.success) {
+      throw new Error(data.error || 'No se pudo regenerar el XML');
+    }
+
+    return data;
+  };
+
+  const handleManualGenerate = async () => {
+    const meta = mergeMetadataForQuickEdit(metadata, collectManualMeta(manual));
+
+    setGeneratedMode(metadata ? 'server-manual' : 'local-manual');
     setStep(2);
-    setProgress({ visible: true, pct: 30, label: 'Generando XML en el navegador...' });
+    setProgress({ visible: true, pct: 30, label: metadata ? 'Regenerando XML completo...' : 'Generando XML en el navegador...' });
     await delay(150);
 
     try {
-      const xml = buildJatsFromMeta(meta);
-      setGeneratedXml(xml);
-      setGeneratedFilename(buildManualFilename(meta.articleTitle));
-      setMetadata(meta);
+      if (metadata) {
+        const data = await rebuildXmlOnServer(meta);
+        setGeneratedXml(data.xml || '');
+        setGeneratedFilename(data.filename || generatedFilename || buildManualFilename());
+        setMetadata(data.metadata || meta);
+      } else {
+        const xml = buildJatsFromMeta(meta);
+        setGeneratedXml(xml);
+        setGeneratedFilename(buildManualFilename());
+        setMetadata(meta);
+      }
       setMetaVisible(true);
       setResultVisible(true);
       setStep(4);
-      showAlert('XML generado localmente en el front-end.', 'success');
+      showAlert(metadata ? 'XML regenerado completo con los metadatos editados.' : 'XML generado localmente en el front-end.', 'success');
     } catch (error) {
       showAlert(`Error al generar XML: ${error.message}`, 'error');
       setStep(1);
@@ -374,6 +433,15 @@ function App() {
 
   const handleManualFieldChange = (key, value) => {
     setManual(current => ({ ...current, [key]: value }));
+  };
+
+  const handleSyncPublisherId = () => {
+    setManual(current => ({
+      ...current,
+      publisherId: String(current.doi || '').trim().includes('/')
+        ? String(current.doi || '').trim().split('/').slice(1).join('/')
+        : String(current.publisherId || '').trim()
+    }));
   };
 
   const handleManualAuthorChange = (index, key, value) => {
@@ -427,6 +495,16 @@ function App() {
       };
     });
   };
+
+  const pairedManualRows = useMemo(() => {
+    const rowCount = Math.max(manual.authors.length, manual.affiliations.length);
+
+    return Array.from({ length: rowCount }, (_, index) => ({
+      index,
+      author: manual.authors[index] || { name: '', orcid: '' },
+      affiliation: manual.affiliations[index] || { id: `aff${index + 1}`, original: '', email: '' }
+    }));
+  }, [manual.authors, manual.affiliations]);
 
   const fileInputId = 'fileInput';
 
@@ -544,44 +622,86 @@ function App() {
         <section className="panel manual-meta-panel">
           <h2 className="panel-title">
             <span className="panel-title-icon">✍️</span>
-            Metadatos manuales (edición rápida)
+            Metadatos manuales del front (edición rápida)
           </h2>
+          <div className="manual-author-actions manual-author-actions--top">
+            <button className="btn-action" type="button" onClick={handleAddManualAuthor}>+ Autor</button>
+            <button className="btn-action" type="button" onClick={handleAddManualAffiliation}>+ Afiliación</button>
+          </div>
           <div className="manual-grid">
-            <div className="manual-row">
-              <label>Autores:</label>
-              <div className="manual-author-actions">
-                <button className="btn-action" type="button" onClick={handleAddManualAuthor}>+ Autor</button>
-              </div>
-              <ul className="manual-authors">
-                {manual.authors.map((author, index) => (
-                  <li key={`${author.name}-${index}`}>
-                    <span className="author-index">{index + 1}.</span>
-                    <input
-                      type="text"
-                      className="author-name"
-                      value={author.name}
-                      onChange={event => handleManualAuthorChange(index, 'name', event.target.value)}
-                      aria-label={`Nombre del autor ${index + 1}`}
-                    />
-                    <input
-                      type="text"
-                      className="author-orcid"
-                      value={author.orcid}
-                      onChange={event => handleManualAuthorChange(index, 'orcid', event.target.value)}
-                      aria-label={`ORCID del autor ${index + 1}`}
-                      placeholder="0000-0000-0000-0000"
-                    />
-                    <button
-                      className="btn-action author-remove"
-                      type="button"
-                      onClick={() => handleRemoveManualAuthor(index)}
-                      aria-label={`Quitar autor ${index + 1}`}
-                    >
-                      Quitar
-                    </button>
-                  </li>
-                ))}
-              </ul>
+            <div className="manual-row manual-row--table">
+              <label>Autores y afiliaciones:</label>
+              <table className="manual-paired-table">
+                <thead>
+                  <tr>
+                    <th>Autor</th>
+                    <th>Afiliación</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pairedManualRows.map(row => (
+                    <tr key={`manual-row-${row.index}`}>
+                      <td>
+                        <div className="manual-paired-cell">
+                          <span className="author-index">{row.index + 1}.</span>
+                          <input
+                            type="text"
+                            className="author-name"
+                            value={row.author.name}
+                            onChange={event => handleManualAuthorChange(row.index, 'name', event.target.value)}
+                            aria-label={`Nombre del autor ${row.index + 1}`}
+                          />
+                          <input
+                            type="text"
+                            className="author-orcid"
+                            value={row.author.orcid}
+                            onChange={event => handleManualAuthorChange(row.index, 'orcid', event.target.value)}
+                            aria-label={`ORCID del autor ${row.index + 1}`}
+                            placeholder="ORCID 0000-0000-0000-0000"
+                          />
+                          <button
+                            className="btn-action author-remove"
+                            type="button"
+                            onClick={() => handleRemoveManualAuthor(row.index)}
+                            aria-label={`Quitar autor ${row.index + 1}`}
+                          >
+                            Quitar
+                          </button>
+                        </div>
+                      </td>
+                      <td>
+                        <div className="manual-paired-cell">
+                          <span className="author-index">{row.index + 1}.</span>
+                          <input
+                            type="text"
+                            className="author-name"
+                            value={row.affiliation.original}
+                            onChange={event => handleManualAffiliationChange(row.index, 'original', event.target.value)}
+                            aria-label={`Afiliación ${row.index + 1}`}
+                            placeholder="Universidad, departamento, ciudad, país"
+                          />
+                          <input
+                            type="text"
+                            className="author-orcid"
+                            value={row.affiliation.email}
+                            onChange={event => handleManualAffiliationChange(row.index, 'email', event.target.value)}
+                            aria-label={`Email de afiliación ${row.index + 1}`}
+                            placeholder="correo@institucion.edu"
+                          />
+                          <button
+                            className="btn-action author-remove"
+                            type="button"
+                            onClick={() => handleRemoveManualAffiliation(row.index)}
+                            aria-label={`Quitar afiliación ${row.index + 1}`}
+                          >
+                            Quitar
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
             <div className="manual-row">
               <label>DOI:</label>
@@ -636,6 +756,24 @@ function App() {
             <div className="manual-row">
               <label>Funding (texto):</label>
               <input type="text" value={manual.fundingText || ''} onChange={event => handleManualFieldChange('fundingText', event.target.value)} placeholder="CAPES; FAPESC" />
+            </div>
+            <div className="manual-row">
+              <label>Front fijo / derivado:</label>
+              <input type="text" value={manual.publisherId || ''} onChange={event => handleManualFieldChange('publisherId', event.target.value)} placeholder="publisher-id derivado del DOI" />
+              <button className="btn-action" type="button" onClick={handleSyncPublisherId}>Derivar desde DOI</button>
+            </div>
+            <div className="manual-row">
+              <label>Categoría del artículo:</label>
+              <input type="text" value={manual.articleCategory || ''} onChange={event => handleManualFieldChange('articleCategory', event.target.value)} placeholder="research-article" />
+              <input type="text" value={manual.articleCategoryLabel || ''} onChange={event => handleManualFieldChange('articleCategoryLabel', event.target.value)} placeholder="Etiqueta visible en el XML" />
+            </div>
+            <div className="manual-row">
+              <label>Licencia:</label>
+              <input type="text" value={manual.licenseHref || ''} onChange={event => handleManualFieldChange('licenseHref', event.target.value)} placeholder="https://creativecommons.org/licenses/by/4.0/" />
+            </div>
+            <div className="manual-row">
+              <label>Texto de licencia:</label>
+              <textarea rows="2" value={manual.licenseText || ''} onChange={event => handleManualFieldChange('licenseText', event.target.value)} placeholder="Este es un artículo publicado en acceso abierto bajo una licencia Creative Commons" />
             </div>
             <div className="manual-row">
               <label>Fechas (recibido/revisado/aceptado):</label>
@@ -734,8 +872,101 @@ function StepItem({ active, done, number, label }) {
   );
 }
 
-function buildManualFilename(title) {
-  return `${String(title || 'manual').replace(/[^a-z0-9]+/gi, '_').substring(0, 80)}_JATS_SPS19`;
+function buildManualFilename() {
+  return 'ID-5939_Eichetal_XML-es';
+}
+
+function mergeMetadataForQuickEdit(baseMetadata, manualMeta) {
+  if (!baseMetadata) {
+    return manualMeta;
+  }
+
+  const funding = resolveFundingForQuickEdit(baseMetadata, manualMeta);
+
+  return {
+    ...baseMetadata,
+    ...manualMeta,
+    bodySections: manualMeta.bodySections || baseMetadata.bodySections || [],
+    references: manualMeta.references || baseMetadata.references || [],
+    funding,
+    fundingStatement: manualMeta.fundingStatement || manualMeta.fundingText || baseMetadata.fundingStatement || '',
+    affiliations_norm: baseMetadata.affiliations_norm || [],
+    affiliations_orgdiv1: baseMetadata.affiliations_orgdiv1 || [],
+    affiliations_orgdiv2: baseMetadata.affiliations_orgdiv2 || [],
+    affiliations_orgname: baseMetadata.affiliations_orgname || [],
+    affiliations_state: baseMetadata.affiliations_state || [],
+    affiliations_country: baseMetadata.affiliations_country || [],
+    affiliations_country_name: baseMetadata.affiliations_country_name || []
+  };
+}
+
+function resolveFundingForQuickEdit(baseMetadata, manualMeta) {
+  const baseFunding = Array.isArray(baseMetadata?.funding)
+    ? baseMetadata.funding.map(normalizeFundingItem).filter(Boolean)
+    : [];
+  const manualText = String(manualMeta?.fundingStatement || manualMeta?.fundingText || '').trim();
+  const baseStatement = String(baseMetadata?.fundingStatement || '').trim();
+  const baseFormatted = baseFunding.map(formatFundingItem).filter(Boolean).join('; ');
+
+  if (baseFunding.length && (!manualText || manualText === baseStatement || manualText === baseFormatted)) {
+    return baseFunding;
+  }
+
+  if (!manualText) {
+    return [];
+  }
+
+  return manualText.split(';').map(normalizeFundingItem).filter(Boolean);
+}
+
+function normalizeFundingItem(item) {
+  if (!item) {
+    return null;
+  }
+
+  if (typeof item === 'object') {
+    const source = String(item.source || '').trim();
+    const awardId = String(item.awardId || '').trim();
+
+    return awardId ? { source, awardId } : source;
+  }
+
+  const text = String(item).trim();
+  const awardMatch = text.match(/(?:No\.?|N[º°]|c[oó]digo de financiamiento No\.?)\s*([A-Za-z0-9./-]+)/i)
+    || text.match(/\b([0-9]{2,4}\/[0-9]{4})\b/);
+  const awardId = awardMatch?.[1] || '';
+  const source = awardId
+    ? text.replace(awardMatch[0], '').replace(/[,\s.]+$/u, '').trim()
+    : text;
+
+  return awardId ? { source, awardId } : source;
+}
+
+function normalizeMetaForServer(meta) {
+  const affiliations = Array.isArray(meta.affiliations) ? meta.affiliations : [];
+  const affiliationEmails = affiliations.map((affiliation, index) => {
+    if (typeof affiliation === 'string') {
+      return meta.affiliations_email?.[index] || '';
+    }
+
+    return String(affiliation?.email || '').trim();
+  });
+  const affiliationTexts = affiliations
+    .map(affiliation => (
+      typeof affiliation === 'string'
+        ? affiliation
+        : String(affiliation?.original || '').trim()
+    ))
+    .filter(Boolean);
+
+  return {
+    ...meta,
+    affiliations: affiliationTexts,
+    affiliations_email: affiliationEmails,
+    fundingStatement: String(meta.fundingStatement || meta.fundingText || '').trim(),
+    'elocation-id': String(meta['elocation-id'] || meta.elocationId || '').trim(),
+    refCount: String(meta.refCount || (Array.isArray(meta.references) ? meta.references.length : 0))
+  };
 }
 
 function collectManualMeta(manual) {
@@ -777,10 +1008,13 @@ function collectManualMeta(manual) {
     issn_epub: String(manual.issn_epub || '').trim(),
     sps: String(manual.sps || '1.9').trim() || '1.9',
     doi: String(manual.doi || '').trim(),
+    licenseHref: String(manual.licenseHref || 'https://creativecommons.org/licenses/by/4.0/').trim() || 'https://creativecommons.org/licenses/by/4.0/',
+    licenseText: String(manual.licenseText || 'Este es un artículo publicado en acceso abierto bajo una licencia Creative Commons').trim() || 'Este es un artículo publicado en acceso abierto bajo una licencia Creative Commons',
     pubdate,
     volume: String(manual.volume || '').trim(),
     'elocation-id': String(manual.elocationId || '').trim(),
     funding: funding ? funding.split(';').map(entry => entry.trim()).filter(Boolean) : (manual.funding || []),
+    fundingStatement: funding,
     conflict: String(manual.conflict || '').trim(),
     contributions: contributions ? [contributions] : [],
     authors,
@@ -792,6 +1026,9 @@ function collectManualMeta(manual) {
     kwdsEs,
     kwdsEn,
     sections,
+    publisherId: String(manual.publisherId || '').trim(),
+    articleCategory: String(manual.articleCategory || 'research-article').trim() || 'research-article',
+    articleCategoryLabel: String(manual.articleCategoryLabel || 'Artículo de investigación').trim() || 'Artículo de investigación',
     received: String(manual.received || '').trim(),
     revised: String(manual.revised || '').trim(),
     accepted: String(manual.accepted || '').trim(),
@@ -803,7 +1040,7 @@ function buildJatsFromMeta(meta) {
   const e = value => esc(String(value || ''));
   const doi = meta.doi || '';
 
-  const pubId = doi ? doi.split('/').slice(1).join('/') : 'XXXX';
+  const pubId = String(meta.publisherId || '').trim() || (doi ? doi.split('/').slice(1).join('/') : 'XXXX');
   const year = meta.accepted?.match(/\d{4}/)?.[0] || meta.pubdate?.match(/\d{4}/)?.[0] || new Date().getFullYear();
 
   let journalMeta = '\t<journal-meta>\r\n';
@@ -830,7 +1067,7 @@ function buildJatsFromMeta(meta) {
   }
   articleMeta += '\t\t<article-categories>\r\n';
   articleMeta += '\t\t\t<subj-group subj-group-type="heading">\r\n';
-  articleMeta += '\t\t\t\t<subject>Artículo</subject>\r\n';
+  articleMeta += `\t\t\t\t<subject>${e(meta.articleCategoryLabel || 'Artículo de investigación')}</subject>\r\n`;
   articleMeta += '\t\t\t</subj-group>\r\n';
   articleMeta += '\t\t</article-categories>\r\n';
 
@@ -936,8 +1173,8 @@ function buildJatsFromMeta(meta) {
   }
 
   articleMeta += '\t\t<permissions>\r\n';
-  articleMeta += '\t\t\t<license license-type="open-access" xlink:href="https://creativecommons.org/licenses/by/4.0/" xml:lang="es">\r\n';
-  articleMeta += '\t\t\t\t<license-p>Este es un artículo publicado en acceso abierto bajo una licencia Creative Commons</license-p>\r\n';
+  articleMeta += `\t\t\t<license license-type="open-access" xlink:href="${e(meta.licenseHref || 'https://creativecommons.org/licenses/by/4.0/')}" xml:lang="es">\r\n`;
+  articleMeta += `\t\t\t\t<license-p>${e(meta.licenseText || 'Este es un artículo publicado en acceso abierto bajo una licencia Creative Commons')}</license-p>\r\n`;
   articleMeta += '\t\t\t</license>\r\n';
   articleMeta += '\t\t</permissions>\r\n';
 
@@ -986,11 +1223,11 @@ function buildJatsFromMeta(meta) {
 
   const refCount = meta.refCount || 0;
   articleMeta += '\t\t<counts>\r\n';
-  articleMeta += '\t\t\t<fig-count count="0"/>\r\n';
-  articleMeta += '\t\t\t<table-count count="0"/>\r\n';
-  articleMeta += '\t\t\t<equation-count count="0"/>\r\n';
+  articleMeta += `\t\t\t<fig-count count="${e(meta.figCount ?? 0)}"/>\r\n`;
+  articleMeta += `\t\t\t<table-count count="${e(meta.tableCount ?? 0)}"/>\r\n`;
+  articleMeta += `\t\t\t<equation-count count="${e(meta.equationCount ?? 0)}"/>\r\n`;
   articleMeta += `\t\t\t<ref-count count="${e(refCount)}"/>\r\n`;
-  articleMeta += '\t\t\t<page-count count="1"/>\r\n';
+  articleMeta += `\t\t\t<page-count count="${e(meta.pageCount ?? 1)}"/>\r\n`;
   articleMeta += '\t\t</counts>\r\n';
   articleMeta += '\t</article-meta>\r\n';
 

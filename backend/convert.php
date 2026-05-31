@@ -15,6 +15,34 @@ require_once __DIR__ . '/DocxParser.php';
 
 // Agrupa todo el proceso de conversión para poder capturar cualquier error y responderlo como JSON.
 try {
+    $contentType = $_SERVER['CONTENT_TYPE'] ?? '';
+    if (stripos($contentType, 'application/json') !== false) {
+        $payload = json_decode(file_get_contents('php://input'), true);
+        if (!is_array($payload)) {
+            throw new RuntimeException('JSON invalido');
+        }
+
+        if (($payload['action'] ?? '') !== 'rebuild') {
+            throw new RuntimeException('Accion JSON no soportada');
+        }
+
+        $meta = $payload['metadata'] ?? null;
+        if (!is_array($meta)) {
+            throw new RuntimeException('No se recibieron metadatos para reconstruir el XML');
+        }
+
+        $parser = new DocxParser('');
+        $xml = $parser->buildJatsXml($meta);
+
+        echo json_encode([
+            'success' => true,
+            'xml' => $xml,
+            'metadata' => $meta,
+            'filename' => preg_replace('/\s+/', '', $payload['filename'] ?? 'documento')
+        ]);
+        exit;
+    }
+
     // Si no llegó el campo "file" o PHP marcó un error de subida, se corta el proceso.
     if (!isset($_FILES['file']) || $_FILES['file']['error'] !== UPLOAD_ERR_OK) {
         // Lanza un error controlado que será capturado por el catch de abajo.
