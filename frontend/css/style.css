@@ -198,6 +198,12 @@ body {
 .manual-grid { display: flex; flex-direction: column; gap: .75rem; }
 .manual-row { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
 .manual-row label { width: 160px; font-family: var(--font-mono); font-size: 13px; color: var(--c-accent); }
+.manual-row--dates { align-items: flex-start; }
+.manual-row--dates > label { width: 100%; margin-bottom: 6px; }
+.manual-dates { display: flex; gap: 8px; flex-wrap: wrap; width: 100%; }
+.manual-dates .date-field { display: flex; flex-direction: column; gap: 6px; }
+.manual-dates .date-field .small-label { font-family: var(--font-mono); font-size: 11px; color: var(--c-muted); }
+.manual-dates .date-field input { width: 160px; }
 .manual-row input[type="text"], .manual-row textarea { flex: 1; min-width: 160px; background: var(--c-surface2); border: 1px solid var(--c-border); color: var(--c-text); padding: .5rem .6rem; border-radius: 8px; font-family: var(--font-mono); }
 .manual-row textarea { resize: vertical; }
 .manual-author-actions { display: flex; gap: .5rem; align-items: center; }
