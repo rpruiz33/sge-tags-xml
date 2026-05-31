@@ -15,6 +15,24 @@ require_once __DIR__ . '/DocxParser.php';
 
 // Agrupa todo el proceso de conversión para poder capturar cualquier error y responderlo como JSON.
 try {
+    // Helper: sanitiza un nombre de archivo devolviendo solo ASCII seguro.
+    $sanitize_filename = function ($raw) {
+        $raw = (string) ($raw ?? 'documento');
+        // Forzar UTF-8
+        $raw = mb_convert_encoding($raw, 'UTF-8', 'UTF-8');
+        // Quitar separador de extensión si viene
+        $base = pathinfo($raw, PATHINFO_FILENAME);
+        // Transliterar a ASCII donde sea posible
+        $trans = @iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $base);
+        if ($trans === false || trim($trans) === '') {
+            $trans = $base;
+        }
+        // Reemplaza cualquier caracter no permitido por guion bajo
+        $clean = preg_replace('/[^A-Za-z0-9._-]+/', '_', $trans);
+        // Colapsa guiones bajos multiples y recorta
+        $clean = preg_replace('/_+/', '_', trim($clean, '_'));
+        return $clean ?: 'documento';
+    };
     $contentType = $_SERVER['CONTENT_TYPE'] ?? '';
     if (stripos($contentType, 'application/json') !== false) {
         $payload = json_decode(file_get_contents('php://input'), true);
@@ -34,11 +52,12 @@ try {
         $parser = new DocxParser('');
         $xml = $parser->buildJatsXml($meta);
 
+        $safe = $sanitize_filename($payload['filename'] ?? 'documento');
         echo json_encode([
             'success' => true,
             'xml' => $xml,
             'metadata' => $meta,
-            'filename' => preg_replace('/\s+/', '', $payload['filename'] ?? 'documento')
+            'filename' => $safe
         ]);
         exit;
     }
@@ -67,16 +86,12 @@ try {
     $xml = $parser->buildJatsXml($meta);
 
     // Envía una respuesta exitosa al frontend con el XML generado, los metadatos y el nombre base del archivo.
+    $safeName = $sanitize_filename($name);
     echo json_encode([
-        // Marca que la conversión terminó correctamente.
         'success' => true,
-        // Incluye el XML JATS completo generado por DocxParser.
         'xml' => $xml,
-        // Incluye los metadatos detectados para que el frontend pueda mostrarlos o depurarlos.
         'metadata' => $meta,
-        // Devuelve el nombre del archivo sin extensión para sugerir un nombre de descarga.
-        // Eliminar espacios en blanco del nombre sugerido para la descarga
-        'filename' => preg_replace('/\s+/', '', pathinfo($name, PATHINFO_FILENAME))
+        'filename' => $safeName
     ]);
 } catch (Throwable $e) {
     // Si algo falla en la subida, parseo o generación, responde como error de solicitud.

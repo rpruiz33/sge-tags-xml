@@ -204,6 +204,12 @@ body {
 .manual-dates .date-field { display: flex; flex-direction: column; gap: 6px; }
 .manual-dates .date-field .small-label { font-family: var(--font-mono); font-size: 11px; color: var(--c-muted); }
 .manual-dates .date-field input { width: 160px; }
+.manual-row--counts { align-items: flex-start; }
+.manual-row--counts > label { width: 100%; margin-bottom: 6px; }
+.manual-counts { display: grid; grid-template-columns: repeat(5, minmax(96px, 1fr)); gap: 8px; width: 100%; }
+.count-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.count-field span { font-family: var(--font-mono); font-size: 11px; color: var(--c-muted); }
+.count-field input { width: 100%; min-width: 0; background: var(--c-surface2); border: 1px solid var(--c-border); color: var(--c-text); padding: .5rem .6rem; border-radius: 8px; font-family: var(--font-mono); }
 .manual-row input[type="text"], .manual-row textarea { flex: 1; min-width: 160px; background: var(--c-surface2); border: 1px solid var(--c-border); color: var(--c-text); padding: .5rem .6rem; border-radius: 8px; font-family: var(--font-mono); }
 .manual-row textarea { resize: vertical; }
 .manual-author-actions { display: flex; gap: .5rem; align-items: center; }
@@ -233,6 +239,7 @@ body {
   .manual-paired-table td { border: none; border-bottom: 1px solid var(--c-border); }
   .manual-paired-table td:last-child { border-bottom: none; }
   .manual-paired-cell { align-items: stretch; }
+  .manual-counts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 /* ── Zona de carga: area drag and drop con feedback visual ────────────────── */
