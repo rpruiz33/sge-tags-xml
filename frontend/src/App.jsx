@@ -6,6 +6,12 @@ const createEmptyManual = () => ({
   affiliations: [{ id: 'aff1', original: '', email: '' }],
   funding: [],
   authors: [{ name: '', orcid: '' }],
+  figCount: 0,
+  tableCount: 0,
+  equationCount: 0,
+  pageCount: 1,
+  references: [],
+  referencesText: '',
   issn_ppub: '',
   issn_epub: '',
   sps: '1.9',
@@ -83,18 +89,33 @@ function formatListValue(value, separator = ' · ') {
     .join(separator);
 }
 
+function normalizeOrcid(value) {
+  const text = String(value || '').trim();
+  const match = text.match(/(?:https?:\/\/orcid\.org\/)?(\d{4}-\d{4}-\d{4}-[\dX]{4})/i);
+
+  return match ? match[1] : text.replace(/^https?:\/\/orcid\.org\//i, '');
+}
+
+function extractOrcidsFromXml(xml) {
+  const matches = String(xml || '').match(/https?:\/\/orcid\.org\/\d{4}-\d{4}-\d{4}-[\dX]{4}/gi) || [];
+
+  return matches.map(normalizeOrcid);
+}
+
 function buildManualFromMetadata(metadata) {
   const base = createEmptyManual();
   if (!metadata) {
     return base;
   }
 
+  const orcidsFromXml = extractOrcidsFromXml(metadata.xml || metadata.generatedXml || '');
+
   // Normaliza autores detectados y limpia prefijo URL en ORCID para editar solo el identificador.
   const authors = Array.isArray(metadata.authors)
     ? metadata.authors
-      .map(author => ({
+      .map((author, index) => ({
         name: String(author?.name || '').trim(),
-        orcid: String(author?.orcid || '').trim().replace(/^https?:\/\/orcid\.org\//i, '')
+        orcid: normalizeOrcid(author?.orcid || author?.contribId || author?.['contrib-id'] || author?.orcidUrl || orcidsFromXml[index] || '')
       }))
       .filter(author => author.name || author.orcid)
     : [];
@@ -326,10 +347,11 @@ function App() {
       setProgress({ visible: true, pct: 70, label: 'Generando XML...' });
       setGeneratedXml(data.xml || '');
       setGeneratedFilename(data.filename || 'documento');
-      setMetadata(data.metadata || null);
+      const responseMetadata = data.metadata ? { ...data.metadata, xml: data.xml || '' } : null;
+      setMetadata(responseMetadata);
       // Sincroniza el formulario manual con lo extraido para permitir ajustes finos sin recargar.
-      setManual(buildManualFromMetadata(data.metadata));
-      setMetaVisible(Boolean(data.metadata));
+      setManual(buildManualFromMetadata(responseMetadata));
+      setMetaVisible(Boolean(responseMetadata));
       setResultVisible(true);
       setStep(3);
       setProgress({ visible: true, pct: 100, label: 'Listo' });
@@ -383,7 +405,7 @@ function App() {
         const data = await rebuildXmlOnServer(meta);
         setGeneratedXml(data.xml || '');
         setGeneratedFilename(data.filename || generatedFilename || buildManualFilename());
-        setMetadata(data.metadata || meta);
+        setMetadata({ ...(data.metadata || meta), xml: data.xml || '' });
       } else {
         const xml = buildJatsFromMeta(meta);
         setGeneratedXml(xml);
@@ -651,13 +673,14 @@ function App() {
                             onChange={event => handleManualAuthorChange(row.index, 'name', event.target.value)}
                             aria-label={`Nombre del autor ${row.index + 1}`}
                           />
+                          <label className="orcid-label" style={{ marginLeft: '8px', fontSize: '0.9em' }}>ORCID:</label>
                           <input
                             type="text"
                             className="author-orcid"
                             value={row.author.orcid}
                             onChange={event => handleManualAuthorChange(row.index, 'orcid', event.target.value)}
                             aria-label={`ORCID del autor ${row.index + 1}`}
-                            placeholder="ORCID 0000-0000-0000-0000"
+                            placeholder="0000-0000-0000-0000"
                           />
                           <button
                             className="btn-action author-remove"
@@ -775,11 +798,22 @@ function App() {
               <label>Texto de licencia:</label>
               <textarea rows="2" value={manual.licenseText || ''} onChange={event => handleManualFieldChange('licenseText', event.target.value)} placeholder="Este es un artículo publicado en acceso abierto bajo una licencia Creative Commons" />
             </div>
-            <div className="manual-row">
+            <div className="manual-row manual-row--dates">
               <label>Fechas (recibido/revisado/aceptado):</label>
-              <input type="text" value={manual.received || ''} onChange={event => handleManualFieldChange('received', event.target.value)} placeholder="11 03 2026" />
-              <input type="text" value={manual.revised || ''} onChange={event => handleManualFieldChange('revised', event.target.value)} placeholder="20 03 2026" />
-              <input type="text" value={manual.accepted || ''} onChange={event => handleManualFieldChange('accepted', event.target.value)} placeholder="25 03 2026" />
+              <div className="manual-dates">
+                <div className="date-field">
+                  <span className="small-label">Recibido</span>
+                  <input type="text" value={manual.received || ''} onChange={event => handleManualFieldChange('received', event.target.value)} placeholder="11 03 2026" />
+                </div>
+                <div className="date-field">
+                  <span className="small-label">Versión final</span>
+                  <input type="text" value={manual.revised || ''} onChange={event => handleManualFieldChange('revised', event.target.value)} placeholder="20 03 2026" />
+                </div>
+                <div className="date-field">
+                  <span className="small-label">Aprobado</span>
+                  <input type="text" value={manual.accepted || ''} onChange={event => handleManualFieldChange('accepted', event.target.value)} placeholder="25 03 2026" />
+                </div>
+              </div>
             </div>
             <div className="manual-row">
               <label>Conflicto de intereses:</label>
@@ -794,8 +828,19 @@ function App() {
               <input type="text" value={manual.sectionsText || ''} onChange={event => handleManualFieldChange('sectionsText', event.target.value)} placeholder="Introducción | Método | Resultados" />
             </div>
             <div className="manual-row">
+              <label>Conteos (fig/tab/ecu/pág):</label>
+              <input type="number" min="0" value={manual.figCount ?? 0} onChange={event => handleManualFieldChange('figCount', event.target.value)} placeholder="Figuras" style={{ width: '80px' }} />
+              <input type="number" min="0" value={manual.tableCount ?? 0} onChange={event => handleManualFieldChange('tableCount', event.target.value)} placeholder="Tablas" style={{ width: '80px', marginLeft: '8px' }} />
+              <input type="number" min="0" value={manual.equationCount ?? 0} onChange={event => handleManualFieldChange('equationCount', event.target.value)} placeholder="Ecuaciones" style={{ width: '100px', marginLeft: '8px' }} />
+              <input type="number" min="1" value={manual.pageCount ?? 1} onChange={event => handleManualFieldChange('pageCount', event.target.value)} placeholder="Páginas" style={{ width: '80px', marginLeft: '8px' }} />
+            </div>
+            <div className="manual-row">
               <label>Cantidad de refs:</label>
-              <input type="text" value={manual.refCount || ''} onChange={event => handleManualFieldChange('refCount', event.target.value)} placeholder="25" />
+              <input type="number" min="0" value={manual.refCount || 0} onChange={event => handleManualFieldChange('refCount', event.target.value)} placeholder="25" style={{ width: '80px' }} />
+            </div>
+            <div className="manual-row">
+              <label>Referencias (una por línea):</label>
+              <textarea rows="6" value={manual.referencesText || ''} onChange={event => handleManualFieldChange('referencesText', event.target.value)} placeholder="Autor A. Título. Revista. Año; ..." />
             </div>
             <div className="manual-row">
               <button className="btn-action btn-accent" type="button" onClick={handleManualGenerate}>Generar XML desde metadatos</button>
@@ -980,7 +1025,7 @@ function collectManualMeta(manual) {
   const authors = (manual.authors || [])
     .map(author => ({
       name: String(author.name || '').trim(),
-      orcid: String(author.orcid || '').trim().replace(/^https?:\/\/orcid\.org\//i, '')
+      orcid: normalizeOrcid(author.orcid)
     }))
     .filter(author => author.name);
 
@@ -1001,6 +1046,9 @@ function collectManualMeta(manual) {
   const kwdsEs = (manual.kwdsEsText || '').trim() ? parseList(manual.kwdsEsText) : (manual.kwdsEs || []);
   const kwdsEn = (manual.kwdsEnText || '').trim() ? parseList(manual.kwdsEnText) : (manual.kwdsEn || []);
   const sections = (manual.sectionsText || '').trim() ? parseList(manual.sectionsText) : (manual.sections || []);
+  const references = (manual.referencesText || '').trim()
+    ? String(manual.referencesText).split(/\r?\n/).map(r => r.trim()).filter(Boolean)
+    : (manual.references || []);
 
   return {
     ...manual,
@@ -1032,7 +1080,12 @@ function collectManualMeta(manual) {
     received: String(manual.received || '').trim(),
     revised: String(manual.revised || '').trim(),
     accepted: String(manual.accepted || '').trim(),
-    refCount: Number(manual.refCount || 0) || 0
+    refCount: Number(manual.refCount || 0) || 0,
+    references,
+    figCount: Number(manual.figCount || 0) || 0,
+    tableCount: Number(manual.tableCount || 0) || 0,
+    equationCount: Number(manual.equationCount || 0) || 0,
+    pageCount: Number(manual.pageCount || 1) || 1
   };
 }
 
