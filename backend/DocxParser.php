@@ -1346,6 +1346,14 @@ class DocxParser
         }
         $meta['tableCount'] = (string)$tableCount;
 
+        // Preserve raw table-wrap XML strings so rebuilds can reinsert them
+        $meta['tableWraps'] = [];
+        foreach ($lines as $line) {
+            if (strpos($line, '<table-wrap>') !== false) {
+                $meta['tableWraps'][] = $line;
+            }
+        }
+
         // Normalizar guion largo en resúmenes para alinear con el XML de referencia.
         // Guarda en "abstractEs" el dato que se acaba de detectar o normalizar.
         $meta['abstractEs'] = str_replace("\xE2\x80\x93", '-', $meta['abstractEs'] ?? '');
@@ -2074,6 +2082,17 @@ class DocxParser
                 $xml .= "\t\t</sec>\r\n";
             }
         }
+        // Si hay tableWraps crudos en metadata, reinsertarlos antes de cerrar el body
+        if (!empty($meta['tableWraps']) && is_array($meta['tableWraps'])) {
+            foreach ($meta['tableWraps'] as $tw) {
+                // Asegurar CRLF e indentación consistente
+                $trimmed = preg_replace('/\r?\n/', '\r\n', trim($tw));
+                // Añadir con una tabulación al inicio de cada línea para mantener formato
+                $lines = explode('\r\n', $trimmed);
+                $xml .= "\t\t" . implode("\r\n\t\t", $lines) . "\r\n";
+            }
+        }
+
         $xml .= "\t</body>\r\n";
         return $xml;
     }
