@@ -12,6 +12,7 @@ ini_set('display_errors', '0');
 
 // Carga la clase DocxParser, que contiene la lógica para leer DOCX, extraer metadatos y armar XML JATS.
 require_once __DIR__ . '/DocxParser.php';
+require_once __DIR__ . '/JatsRichParser.php';
 
 // Agrupa todo el proceso de conversión para poder capturar cualquier error y responderlo como JSON.
 try {
@@ -49,8 +50,14 @@ try {
             throw new RuntimeException('No se recibieron metadatos para reconstruir el XML');
         }
 
-        $parser = new DocxParser('');
-        $xml = $parser->buildJatsXml($meta);
+        // Si el origen era XML y tenemos el XML original, preservarlo y aplicar merges parciales
+        if (!empty($meta['source']) && $meta['source'] === 'xml' && !empty($meta['originalXml'])) {
+            $jparser = new JatsRichParser();
+            $xml = $jparser->mergeMetaIntoOriginalXml($meta['originalXml'], $meta);
+        } else {
+            $parser = new DocxParser('');
+            $xml = $parser->buildJatsXml($meta);
+        }
 
         $safe = $sanitize_filename($payload['filename'] ?? 'documento');
         echo json_encode([
@@ -74,16 +81,35 @@ try {
     $name = $_FILES['file']['name'] ?? 'documento';
 
     // Crea el parser apuntando al archivo temporal que se acaba de subir.
-    $parser = new DocxParser($tmp);
+    $ext = strtolower(pathinfo($name, PATHINFO_EXTENSION));
+    if ($ext === 'xml') {
+        // Si suben un JATS XML, decidir si usamos el parser enriquecido
+        $xmlContent = file_get_contents($tmp);
+        $hasRich = preg_match('/<fig\b|<table-wrap\b|<graphic\b/i', $xmlContent);
+        if ($hasRich) {
+            $jparser = new JatsRichParser();
+            $meta = $jparser->parseXmlToMeta($xmlContent);
+            // Devolver XML original para preservar figuras/tablas exactamente
+            $xml = $xmlContent;
+        } else {
+            // XML sin figuras/tablas: intentar extraer metadatos ligeros
+            $jparser = new JatsRichParser();
+            $meta = $jparser->parseXmlToMeta($xmlContent);
+            $xml = $xmlContent;
+        }
+    } else {
+        // Asumir DOCX por compatibilidad hacia atrás
+        $parser = new DocxParser($tmp);
 
-    // Abre el DOCX, lee word/document.xml y devuelve sus párrafos como líneas de texto.
-    $lines = $parser->extractLines();
+        // Abre el DOCX, lee word/document.xml y devuelve sus párrafos como líneas de texto.
+        $lines = $parser->extractLines();
 
-    // Analiza esas líneas para detectar DOI, títulos, autores, afiliaciones, fechas y otros metadatos.
-    $meta = $parser->parseMetadata($lines);
+        // Analiza esas líneas para detectar DOI, títulos, autores, afiliaciones, fechas y otros metadatos.
+        $meta = $parser->parseMetadata($lines);
 
-    // Construye el XML JATS usando los metadatos detectados.
-    $xml = $parser->buildJatsXml($meta);
+        // Construye el XML JATS usando los metadatos detectados.
+        $xml = $parser->buildJatsXml($meta);
+    }
 
     // Envía una respuesta exitosa al frontend con el XML generado, los metadatos y el nombre base del archivo.
     $safeName = $sanitize_filename($name);
