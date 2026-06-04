@@ -209,7 +209,7 @@ class DocxParser
                     $cellParas[] = $this->parseParagraphNode($p, $xpath, null);
                 }
                 $nonEmpty = array_filter($cellParas, function ($v) { return $v !== ''; });
-                $xml .= implode('<br/>', $nonEmpty);
+                $xml .= implode('<break/>', $nonEmpty);
                 $xml .= "</td>\r\n";
             }
             $xml .= "\t\t\t\t</tr>\r\n";
@@ -220,25 +220,44 @@ class DocxParser
 
     public function parseMetadata(array $lines)
     {
-        $meta = [
-            'lang' => 'es',
-            'sps' => 'sps-1.9',
-            'journalTitle' => '',
-            'journalAbbrev' => '',
-            'journalIdPublisher' => '',
-            'issn_ppub' => '',
-            'issn_epub' => '',
-            'publisher' => '',
-            'doi' => '',
-            'articleTitle' => '',
-            'articleTitleEn' => '',
-            'authors' => [],
-            'affiliations' => [],
-            'affiliations_lineindex' => [],
-            'affiliations_norm' => [],
-            'affiliations_orgdiv1' => [],
-            'affiliations_orgdiv2' => [],
-        ];
+        // Dentro de DocxParser.php -> parseMetadata()
+$meta = [
+    'lang' => 'es',
+    'sps' => 'sps-1.9',
+    'journalTitle' => '',
+    'journalAbbrev' => '',
+    'journalIdPublisher' => '',
+    'issn_ppub' => '',
+    'issn_epub' => '',
+    'publisher' => '',
+    'doi' => '',
+    'articleTitle' => '',
+    'articleTitleEn' => '',
+    'authors' => [],
+    'affiliations' => [],
+    'affiliations_lineindex' => [],
+    'affiliations_norm' => [],
+    'affiliations_orgdiv1' => [],
+    'affiliations_orgdiv2' => [],
+    'abstractEs' => '',
+    'abstractEn' => '',
+    'kwdsEs' => [],
+    'kwdsEn' => [],
+    'funding' => [],
+    'fundingStatement' => '',
+    'conflict' => '',
+    'contributions' => [],
+    'references' => [],
+    'tableWraps' => [],
+    'figures' => [],
+    'volume' => '',
+    'elocation-id' => '',
+    'collectionYear' => '',
+    'received' => '',
+    'revised' => '',
+    'accepted' => '',
+    'pubdate' => ''
+];
 
         // Mapa de nombres de meses en español/portugués a número de mes.
         // Inicializa el arreglo $monthMap.
@@ -790,19 +809,126 @@ class DocxParser
                 // Agrega al metadato "affiliations_orgdiv2" una nueva pieza detectada en el DOCX.
                 $meta['affiliations_orgdiv2'][] = $orgdiv2;
 
-                // Si encuentra una ubicación de Brasil, prepara el valor de $state para usarlo dentro del bloque.
-                if (preg_match('/([\p{L}\s]+),\s*Brasil/u', $affText, $st)) {
-                    // Limpia espacios sobrantes y deja el texto listo en $state.
-                    $state = trim($st[1]);
-                    // Agrega al metadato "affiliations_state" una nueva pieza detectada en el DOCX.
+                // Detect city, state, country
+                $email = '';
+                if (preg_match('/([\w.%-]+@[\w.-]+\.[A-Za-z]{2,})/u', $affText, $em)) {
+                    $email = $em[1];
+                }
+                
+                $cleanedText = rtrim(trim($affText), ' .;,!?');
+                if ($email !== '') {
+                    $cleanedText = trim(str_replace($email, '', $cleanedText), ' .;,!?');
+                }
+                
+                $parts = array_map('trim', preg_split('/[,;]/u', $cleanedText));
+                $country = '';
+                $countryCode = '';
+                $city = '';
+                $state = '';
+                
+                $countryMap = [
+                    'argentina' => 'AR',
+                    'brasil' => 'BR',
+                    'brazil' => 'BR',
+                    'chile' => 'CL',
+                    'colombia' => 'CO',
+                    'méxico' => 'MX',
+                    'mexico' => 'MX',
+                    'españa' => 'ES',
+                    'spain' => 'ES',
+                    'uruguay' => 'UY',
+                    'paraguay' => 'PY',
+                    'perú' => 'PE',
+                    'peru' => 'PE',
+                    'ecuador' => 'EC',
+                    'venezuela' => 'VE',
+                    'bolivia' => 'BO',
+                    'cuba' => 'CU',
+                    'costa rica' => 'CR',
+                    'panamá' => 'PA',
+                    'panama' => 'PA',
+                    'puerto rico' => 'PR',
+                    'ee.uu.' => 'US',
+                    'usa' => 'US',
+                    'estados unidos' => 'US',
+                    'united states' => 'US',
+                    'portugal' => 'PT',
+                    'italia' => 'IT',
+                    'italy' => 'IT',
+                    'francia' => 'FR',
+                    'france' => 'FR',
+                    'reino unido' => 'GB',
+                    'uk' => 'GB',
+                    'united kingdom' => 'GB',
+                    'alemania' => 'DE',
+                    'germany' => 'DE'
+                ];
+                
+                $countryNames = [
+                    'AR' => 'Argentina',
+                    'BR' => 'Brazil',
+                    'CL' => 'Chile',
+                    'CO' => 'Colombia',
+                    'MX' => 'Mexico',
+                    'ES' => 'Spain',
+                    'UY' => 'Uruguay',
+                    'PY' => 'Paraguay',
+                    'PE' => 'Peru',
+                    'EC' => 'Ecuador',
+                    'VE' => 'Venezuela',
+                    'BO' => 'Bolivia',
+                    'CU' => 'Cuba',
+                    'CR' => 'Costa Rica',
+                    'PA' => 'Panama',
+                    'PR' => 'Puerto Rico',
+                    'US' => 'United States',
+                    'PT' => 'Portugal',
+                    'IT' => 'Italy',
+                    'FR' => 'France',
+                    'GB' => 'United Kingdom',
+                    'DE' => 'Germany'
+                ];
+                
+                if (count($parts) >= 2) {
+                    $possibleCountry = array_pop($parts);
+                    $possibleCity = array_pop($parts);
+                    
+                    $lowerCountry = mb_strtolower($possibleCountry);
+                    if (isset($countryMap[$lowerCountry])) {
+                        $country = $possibleCountry;
+                        $countryCode = $countryMap[$lowerCountry];
+                        $city = $possibleCity;
+                    } else {
+                        $parts[] = $possibleCity;
+                        $parts[] = $possibleCountry;
+                    }
+                }
+                
+                if ($country === '' && count($parts) >= 1) {
+                    $possibleCountry = array_pop($parts);
+                    $lowerCountry = mb_strtolower($possibleCountry);
+                    if (isset($countryMap[$lowerCountry])) {
+                        $country = $possibleCountry;
+                        $countryCode = $countryMap[$lowerCountry];
+                    } else {
+                        $parts[] = $possibleCountry;
+                    }
+                }
+                
+                if ($city === '' && count($parts) >= 1) {
+                    $lastPart = array_pop($parts);
+                    if (!preg_match('/\b(Universidad|Universidade|University|Instituto|Institute|Departamento|Department|Programa|Faculty|Facultad|Centro|Hospital|Laboratorio|Lab\.?)/iu', $lastPart)) {
+                        $city = $lastPart;
+                    } else {
+                        $parts[] = $lastPart;
+                    }
+                }
+                
+                $meta['affiliations_city'][] = $city;
+                if ($countryCode === 'BR' && count($parts) >= 1) {
+                    $state = array_pop($parts);
                     $meta['affiliations_state'][] = $state;
-                    // Agrega al metadato "affiliations_country" una nueva pieza detectada en el DOCX.
-                    $meta['affiliations_country'][] = 'BR';
-                    // Agrega al metadato "affiliations_country_name" una nueva pieza detectada en el DOCX.
-                    $meta['affiliations_country_name'][] = 'Brazil';
-                // Ejecuta este bloque cuando la condición anterior no se cumple.
                 } else {
-                    // Agrega al metadato "affiliations_state" una nueva pieza detectada en el DOCX.
                     $meta['affiliations_state'][] = '';
                     // Agrega al metadato "affiliations_country" una nueva pieza detectada en el DOCX.
                     $meta['affiliations_country'][] = '';
@@ -1744,11 +1870,15 @@ class DocxParser
                 $articleMeta .= $t4 . "<institution content-type=\"orgname\">" . $e($meta['affiliations_orgname'][$i]) . "</institution>\n";
             }
             // Si el dato todavía está vacío, añade contenido al acumulador $articleMeta.
-            if (!empty($meta['affiliations_state'][$i])) {
+            if (!empty($meta['affiliations_city'][$i]) || !empty($meta['affiliations_state'][$i])) {
                 // Agrega contenido al texto acumulado en $articleMeta.
                 $articleMeta .= $t4 . "<addr-line>\n";
-                // Agrega contenido al texto acumulado en $articleMeta.
-                $articleMeta .= $t5 . "<state>" . $e($meta['affiliations_state'][$i]) . "</state>\n";
+                if (!empty($meta['affiliations_city'][$i])) {
+                    $articleMeta .= $t5 . "<city>" . $e($meta['affiliations_city'][$i]) . "</city>\n";
+                }
+                if (!empty($meta['affiliations_state'][$i])) {
+                    $articleMeta .= $t5 . "<state>" . $e($meta['affiliations_state'][$i]) . "</state>\n";
+                }
                 // Agrega contenido al texto acumulado en $articleMeta.
                 $articleMeta .= $t4 . "</addr-line>\n";
             }
@@ -1973,36 +2103,6 @@ class DocxParser
             $articleMeta .= $t3 . "</kwd-group>\n";
         }
 
-        // Si hay financiamiento estructurado, agrega más XML o texto al acumulador $articleMeta.
-        if (!empty($meta['funding'])) {
-            // Agrega contenido al texto acumulado en $articleMeta.
-            $articleMeta .= $t3 . "<funding-group>\n";
-            // Recorre $meta['funding'] para procesar cada elemento detectado.
-            foreach ($meta['funding'] as $f) {
-                // Prepara $source con el valor que se usará después.
-                $source = is_array($f) ? ($f['source'] ?? '') : $f;
-                // Prepara $awardId con el valor que se usará después.
-                $awardId = is_array($f) ? ($f['awardId'] ?? '') : '';
-                // Agrega contenido al texto acumulado en $articleMeta.
-                $articleMeta .= $t4 . "<award-group award-type=\"contract\">\n";
-                // Agrega contenido al texto acumulado en $articleMeta.
-                $articleMeta .= $t5 . "<funding-source>" . $e($source) . "</funding-source>\n";
-                // Si hay código de financiamiento, agrega más XML o texto al acumulador $articleMeta.
-                if ($awardId !== '') {
-                    // Agrega contenido al texto acumulado en $articleMeta.
-                    $articleMeta .= $t5 . "<award-id>" . $e($awardId) . "</award-id>\n";
-                }
-                // Agrega contenido al texto acumulado en $articleMeta.
-                $articleMeta .= $t4 . "</award-group>\n";
-            }
-            // Si el dato todavía está vacío, añade contenido al acumulador $articleMeta.
-            if (!empty($meta['fundingStatement'])) {
-                // Agrega contenido al texto acumulado en $articleMeta.
-                $articleMeta .= $t4 . "<funding-statement>" . $e($meta['fundingStatement']) . "</funding-statement>\n";
-            }
-            // Agrega contenido al texto acumulado en $articleMeta.
-            $articleMeta .= $t3 . "</funding-group>\n";
-        }
 
         // Prepara $figCount con el valor que se usará después.
         $figCount = isset($meta['figCount']) && $meta['figCount'] !== '' ? $meta['figCount'] : 0;
@@ -2193,16 +2293,7 @@ class DocxParser
                 $xml .= "\t\t</sec>\r\n";
             }
         }
-        // Si hay tableWraps crudos en metadata, reinsertarlos antes de cerrar el body
-        if (!empty($meta['tableWraps']) && is_array($meta['tableWraps'])) {
-            foreach ($meta['tableWraps'] as $tw) {
-                // Asegurar CRLF e indentación consistente
-                $trimmed = preg_replace('/\r?\n/', '\r\n', trim($tw));
-                // Añadir con una tabulación al inicio de cada línea para mantener formato
-                $lines = explode('\r\n', $trimmed);
-                $xml .= "\t\t" . implode("\r\n\t\t", $lines) . "\r\n";
-            }
-        }
+
 
         $xml .= "\t</body>\r\n";
         return $xml;

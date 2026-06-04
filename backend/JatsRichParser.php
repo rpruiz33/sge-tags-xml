@@ -417,6 +417,14 @@ class JatsRichParser
 
         // --- Actualización de Nodos en Front-Matter (<front>) ---
 
+        // --- Remove redundant funding elements under article-meta ---
+        $fundingNodes = $xpath->query('//*[local-name()="article-meta"]//*[local-name()="funding-group"] | //*[local-name()="article-meta"]//*[local-name()="award-group"] | //*[local-name()="article-meta"]//*[local-name()="funding-source"] | //*[local-name()="article-meta"]//*[local-name()="funding-statement"]');
+        foreach ($fundingNodes as $fnNode) {
+            if ($fnNode->parentNode) {
+                $fnNode->parentNode->removeChild($fnNode);
+            }
+        }
+
         if (!empty($meta['articleTitle'])) {
             $t = $xpath->query('//*[local-name()="article-meta"]/*[local-name()="title-group"]/*[local-name()="article-title"]')->item(0);
             if ($t) $setText($t, $meta['articleTitle']);
@@ -515,15 +523,193 @@ class JatsRichParser
             $i = 0;
             foreach ($affs as $a) {
                 if (!isset($meta['affiliations'][$i])) { $i++; continue; }
-                $origNode = $xpath->query('.//*[local-name()="institution" and @content-type="original"]', $a)->item(0);
-                if ($origNode) {
-                    $setText($origNode, $meta['affiliations'][$i]);
-                } else {
-                    foreach (iterator_to_array($a->childNodes) as $child) {
-                        if ($child instanceof DOMText) $a->removeChild($child);
-                    }
-                    $a->insertBefore($dom->createTextNode($meta['affiliations'][$i]), $a->firstChild);
+                
+                // Keep label if it exists
+                $labelNode = $xpath->query('.//*[local-name()="label"]', $a)->item(0);
+                $labelText = $labelNode ? trim($labelNode->textContent) : (string)($i + 1);
+                
+                // Clear all children of $a
+                while ($a->firstChild) {
+                    $a->removeChild($a->firstChild);
                 }
+                
+                // Append label back
+                if ($labelText !== '') {
+                    $lbl = $dom->createElement('label', $labelText);
+                    $a->appendChild($lbl);
+                }
+                
+                $affText = $meta['affiliations'][$i];
+                
+                // Extract email if any
+                $email = '';
+                if (preg_match('/([\w.%-]+@[\w.-]+\.[A-Za-z]{2,})/u', $affText, $emMatches)) {
+                    $email = $emMatches[1];
+                }
+                
+                // Original institution node
+                $origNode = $dom->createElement('institution', $affText);
+                $origNode->setAttribute('content-type', 'original');
+                $a->appendChild($origNode);
+                
+                // Parse normalized components (orgname)
+                $orgname = '';
+                if (preg_match('/(Universidade[^.,;]+|Universidad[^.,;]+|University[^.,;]+)/u', $affText, $orgMatches)) {
+                    $orgname = trim($orgMatches[1]);
+                }
+                
+                if ($orgname !== '') {
+                    $normNode = $dom->createElement('institution', $orgname);
+                    $normNode->setAttribute('content-type', 'normalized');
+                    $a->appendChild($normNode);
+                }
+                
+                // Parse divisions (orgdiv1, orgdiv2)
+                $departmentMatches = [];
+                if (preg_match_all('/(Departamento[^.;,]+)/iu', $affText, $mdept)) {
+                    $departmentMatches = array_map('trim', $mdept[1]);
+                }
+                $programMatches = [];
+                if (preg_match_all('/(Programa[^.;,]+)/iu', $affText, $mprog)) {
+                    $programMatches = array_map('trim', $mprog[1]);
+                }
+                $instituteMatches = [];
+                if (preg_match_all('/(Instituto[^.;,]+)/iu', $affText, $minst)) {
+                    $instituteMatches = array_map('trim', $minst[1]);
+                }
+                $facMatches = [];
+                if (preg_match_all('/(Facultad[^.;,]+|Faculdade[^.;,]+|Faculty[^.;,]+)/iu', $affText, $mfac)) {
+                    $facMatches = array_map('trim', $mfac[1]);
+                }
+                
+                $orgdivs = [];
+                if (!empty($facMatches)) $orgdivs[] = $facMatches[0];
+                if (!empty($instituteMatches)) $orgdivs[] = $instituteMatches[0];
+                if (!empty($departmentMatches)) $orgdivs[] = $departmentMatches[0];
+                if (!empty($programMatches)) $orgdivs[] = $programMatches[0];
+                $orgdivs = array_values(array_unique($orgdivs));
+                
+                if (isset($orgdivs[0])) {
+                    $od1 = $dom->createElement('institution', $orgdivs[0]);
+                    $od1->setAttribute('content-type', 'orgdiv1');
+                    $a->appendChild($od1);
+                }
+                if (isset($orgdivs[1])) {
+                    $od2 = $dom->createElement('institution', $orgdivs[1]);
+                    $od2->setAttribute('content-type', 'orgdiv2');
+                    $a->appendChild($od2);
+                }
+                
+                if ($orgname !== '') {
+                    $nameNode = $dom->createElement('institution', $orgname);
+                    $nameNode->setAttribute('content-type', 'orgname');
+                    $a->appendChild($nameNode);
+                }
+                
+                // Clean punctuation for parsing city and country
+                $cleanedText = rtrim(trim($affText), ' .;,!?');
+                if ($email !== '') {
+                    $cleanedText = trim(str_replace($email, '', $cleanedText), ' .;,!?');
+                }
+                
+                $parts = array_map('trim', preg_split('/[,;]/u', $cleanedText));
+                $country = '';
+                $countryCode = '';
+                $city = '';
+                
+                $countryMap = [
+                    'argentina' => 'AR',
+                    'brasil' => 'BR',
+                    'brazil' => 'BR',
+                    'chile' => 'CL',
+                    'colombia' => 'CO',
+                    'méxico' => 'MX',
+                    'mexico' => 'MX',
+                    'españa' => 'ES',
+                    'spain' => 'ES',
+                    'uruguay' => 'UY',
+                    'paraguay' => 'PY',
+                    'perú' => 'PE',
+                    'peru' => 'PE',
+                    'ecuador' => 'EC',
+                    'venezuela' => 'VE',
+                    'bolivia' => 'BO',
+                    'cuba' => 'CU',
+                    'costa rica' => 'CR',
+                    'panamá' => 'PA',
+                    'panama' => 'PA',
+                    'puerto rico' => 'PR',
+                    'ee.uu.' => 'US',
+                    'usa' => 'US',
+                    'estados unidos' => 'US',
+                    'united states' => 'US',
+                    'portugal' => 'PT',
+                    'italia' => 'IT',
+                    'italy' => 'IT',
+                    'francia' => 'FR',
+                    'france' => 'FR',
+                    'reino unido' => 'GB',
+                    'uk' => 'GB',
+                    'united kingdom' => 'GB',
+                    'alemania' => 'DE',
+                    'germany' => 'DE'
+                ];
+                
+                if (count($parts) >= 2) {
+                    $possibleCountry = array_pop($parts);
+                    $possibleCity = array_pop($parts);
+                    
+                    $lowerCountry = mb_strtolower($possibleCountry);
+                    if (isset($countryMap[$lowerCountry])) {
+                        $country = $possibleCountry;
+                        $countryCode = $countryMap[$lowerCountry];
+                        $city = $possibleCity;
+                    } else {
+                        $parts[] = $possibleCity;
+                        $parts[] = $possibleCountry;
+                    }
+                }
+                
+                if ($country === '' && count($parts) >= 1) {
+                    $possibleCountry = array_pop($parts);
+                    $lowerCountry = mb_strtolower($possibleCountry);
+                    if (isset($countryMap[$lowerCountry])) {
+                        $country = $possibleCountry;
+                        $countryCode = $countryMap[$lowerCountry];
+                    } else {
+                        $parts[] = $possibleCountry;
+                    }
+                }
+                
+                if ($city === '' && count($parts) >= 1) {
+                    $lastPart = array_pop($parts);
+                    if (!preg_match('/\b(Universidad|Universidade|University|Instituto|Institute|Departamento|Department|Programa|Faculty|Facultad|Centro|Hospital|Laboratorio|Lab\.?)/iu', $lastPart)) {
+                        $city = $lastPart;
+                    } else {
+                        $parts[] = $lastPart;
+                    }
+                }
+                
+                if ($city !== '') {
+                    $addrNode = $dom->createElement('addr-line');
+                    $cityNode = $dom->createElement('city', $city);
+                    $addrNode->appendChild($cityNode);
+                    $a->appendChild($addrNode);
+                }
+                
+                if ($country !== '') {
+                    $countryNode = $dom->createElement('country', $country);
+                    if ($countryCode !== '') {
+                        $countryNode->setAttribute('country', $countryCode);
+                    }
+                    $a->appendChild($countryNode);
+                }
+                
+                if ($email !== '') {
+                    $emailNode = $dom->createElement('email', $email);
+                    $a->appendChild($emailNode);
+                }
+                
                 $i++;
             }
         }
@@ -574,7 +760,9 @@ class JatsRichParser
             $xml = preg_replace('/(<back\b[^>]*>)(.*)(<\/back>)/is', '$1' . addcslashes($backContent, '$') . '$3', $xml);
         }
 
-        // 3. Normalización final de tags autocerrados remanentes en metadatos
+        // 3. Normalización final de tags autocerrados remanentes en metadatos y reemplazo de <br/> a <break/>
+        $xml = preg_replace('/<br\s*\/?>/i', '<break/>', $xml);
+
         $nonSelfClosing = ['td', 'th', 'tr', 'thead', 'tbody', 'table', 'bold', 'italic', 'p', 'title', 'label', 'abstract'];
         foreach ($nonSelfClosing as $tag) {
             $xml = preg_replace(
