@@ -107,16 +107,109 @@ class DocxParser
 
     private function parseTableNode($tbl, $xpath)
     {
+        $NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+
+        // Helper: get a w: attribute value from a DOMElement
+        $wa = function ($node, $attr) use ($NS) {
+            return $node ? $node->getAttributeNS($NS, $attr) : null;
+        };
+
         $xml = "<table-wrap>\r\n\t\t<table>\r\n\t\t\t<tbody>\r\n";
         foreach ($xpath->query('./w:tr', $tbl) as $tr) {
             $xml .= "\t\t\t\t<tr>\r\n";
+
             foreach ($xpath->query('./w:tc', $tr) as $tc) {
-                $xml .= "\t\t\t\t\t<td>";
+                $tcPr   = $xpath->query('./w:tcPr', $tc)->item(0);
+                $styles = [];
+                $attrs  = '';
+
+                // ── background-color (w:shd @w:fill) ──────────────────────────────
+                $shd  = $tcPr ? $xpath->query('./w:shd', $tcPr)->item(0) : null;
+                $fill = $shd  ? $wa($shd, 'fill') : null;
+                if ($fill && $fill !== 'auto' && $fill !== 'none' && strlen($fill) === 6) {
+                    $styles[] = "background-color:#$fill";
+                }
+
+                // ── vertical-align (w:vAlign @w:val) ──────────────────────────────
+                $vAl = $tcPr ? $xpath->query('./w:vAlign', $tcPr)->item(0) : null;
+                $va  = $vAl  ? $wa($vAl, 'val') : null;
+                if ($va && $va !== 'top') {
+                    $styles[] = "vertical-align:$va";
+                }
+
+                // ── font-size (first w:sz in any run inside the cell) ─────────────
+                $szNode = $xpath->query('.//w:rPr/w:sz', $tc)->item(0);
+                if ($szNode) {
+                    $halfPt = (int) $wa($szNode, 'val');
+                    if ($halfPt > 0) {
+                        $pt = $halfPt / 2;
+                        $styles[] = "font-size:{$pt}pt";
+                    }
+                }
+
+                // ── font-weight bold (any w:b in the cell runs) ───────────────────
+                $boldNode = $xpath->query('.//w:rPr/w:b', $tc)->item(0);
+                if ($boldNode) {
+                    // w:b with w:val="0" means explicitly NOT bold
+                    $bVal = $wa($boldNode, 'val');
+                    if ($bVal !== '0' && $bVal !== 'false') {
+                        $styles[] = 'font-weight:bold';
+                    }
+                }
+
+                // ── colspan (w:gridSpan @w:val) ───────────────────────────────────
+                $gs     = $tcPr ? $xpath->query('./w:gridSpan', $tcPr)->item(0) : null;
+                $gsVal  = $gs   ? (int) $wa($gs, 'val') : 0;
+                if ($gsVal > 1) {
+                    $attrs .= " colspan=\"$gsVal\"";
+                }
+
+                // ── rowspan via vMerge ────────────────────────────────────────────
+                // We do a two-pass approach: first collect vMerge info, then emit rowspan.
+                // Simple approach: emit rowspan="N" on the restart cell.
+                $vMerge = $tcPr ? $xpath->query('./w:vMerge', $tcPr)->item(0) : null;
+                if ($vMerge) {
+                    $vmVal = $wa($vMerge, 'val');
+                    if ($vmVal === 'restart') {
+                        // Count how many rows below continue this merge in this column position
+                        $colIdx = 0;
+                        $prev = $tc->previousSibling;
+                        while ($prev) {
+                            if ($prev->nodeName === 'w:tc') $colIdx++;
+                            $prev = $prev->previousSibling;
+                        }
+                        $span = 1;
+                        $nextTr = $tr->nextSibling;
+                        while ($nextTr) {
+                            if ($nextTr->nodeName !== 'w:tr') { $nextTr = $nextTr->nextSibling; continue; }
+                            $sibCells = $xpath->query('./w:tc', $nextTr);
+                            $sibTC = $sibCells->item($colIdx);
+                            if (!$sibTC) break;
+                            $sibPr = $xpath->query('./w:tcPr', $sibTC)->item(0);
+                            $sibVM = $sibPr ? $xpath->query('./w:vMerge', $sibPr)->item(0) : null;
+                            if (!$sibVM || $wa($sibVM, 'val') === 'restart') break;
+                            $span++;
+                            $nextTr = $nextTr->nextSibling;
+                        }
+                        if ($span > 1) $attrs .= " rowspan=\"$span\"";
+                    } else {
+                        // continuation cell — skip it entirely
+                        continue;
+                    }
+                }
+
+                // ── build style attribute ─────────────────────────────────────────
+                $styleAttr = $styles ? ' style="' . implode(';', $styles) . '"' : '';
+
+                $xml .= "\t\t\t\t\t<td{$styleAttr}{$attrs}>";
+
+                // ── cell content ──────────────────────────────────────────────────
                 $cellParas = [];
                 foreach ($xpath->query('./w:p', $tc) as $p) {
                     $cellParas[] = $this->parseParagraphNode($p, $xpath, null);
                 }
-                $xml .= implode('<br/>', array_filter($cellParas));
+                $nonEmpty = array_filter($cellParas, function ($v) { return $v !== ''; });
+                $xml .= implode('<br/>', $nonEmpty);
                 $xml .= "</td>\r\n";
             }
             $xml .= "\t\t\t\t</tr>\r\n";
@@ -1580,6 +1673,15 @@ class DocxParser
             $articleMeta .= $t6 . "<given-names>" . $e($given) . "</given-names>\n";
             // Agrega contenido al texto acumulado en $articleMeta.
             $articleMeta .= $t5 . "</name>\n";
+            // Si hay bio para este autor, lo incluye.
+            $bioText = $meta['affiliations'][$i] ?? '';
+            $affEmailBio = $meta['affiliations_email'][$i] ?? '';
+            if ($bioText !== '') {
+                if ($affEmailBio !== '' && stripos($bioText, $affEmailBio) === false) {
+                    $bioText = rtrim($bioText, " ;") . '. ' . $affEmailBio . ' ';
+                }
+                $articleMeta .= $t5 . "<bio>" . $e($bioText) . "</bio>\n";
+            }
             // Agrega contenido al texto acumulado en $articleMeta.
             $articleMeta .= $t5 . "<xref ref-type=\"aff\" rid=\"aff" . $n . "\"><sup>" . $n . "</sup></xref>\n";
             // Agrega contenido al texto acumulado en $articleMeta.
@@ -1685,7 +1787,7 @@ class DocxParser
                 // Agrega contenido al texto acumulado en $articleMeta.
                 $articleMeta .= $t4 . "<fn fn-type=\"conflict\" id=\"fn2\">\n";
                 // Agrega contenido al texto acumulado en $articleMeta.
-                $articleMeta .= $t5 . "<label>Conflicto de Intereses</label>\n";
+                $articleMeta .= $t5 . "<label>Conflicto de intereses</label>\n";
                 // Agrega contenido al texto acumulado en $articleMeta.
                 $articleMeta .= $t5 . "<p> " . $e($meta['conflict']) . "</p>\n";
                 // Agrega contenido al texto acumulado en $articleMeta.
@@ -1795,6 +1897,15 @@ class DocxParser
                 // Agrega contenido al texto acumulado en $articleMeta.
                 $articleMeta .= $t4 . "</date>\n";
             }
+            // Agrega date-type="pub" al historial.
+            if (!empty($meta['pubdate'])) {
+                $dpub = preg_split('/\s+/', trim($meta['pubdate']));
+                $articleMeta .= $t4 . "<date date-type=\"pub\">\n";
+                if (!empty($dpub[0])) $articleMeta .= $t5 . "<day>" . $e($dpub[0]) . "</day>\n";
+                if (!empty($dpub[1])) $articleMeta .= $t5 . "<month>" . $e($dpub[1]) . "</month>\n";
+                if (!empty($dpub[2])) $articleMeta .= $t5 . "<year>" . $e($dpub[2]) . "</year>\n";
+                $articleMeta .= $t4 . "</date>\n";
+            }
             // Agrega contenido al texto acumulado en $articleMeta.
             $articleMeta .= $t3 . "</history>\n";
         }
@@ -1815,7 +1926,7 @@ class DocxParser
             // Agrega contenido al texto acumulado en $articleMeta.
             $articleMeta .= $t3 . "<abstract>\n";
             // Agrega contenido al texto acumulado en $articleMeta.
-            $articleMeta .= $t4 . "<title>Resumen</title>\n";
+            $articleMeta .= $t4 . "<title>RESUMEN </title>\n";
             // Agrega contenido al texto acumulado en $articleMeta.
             $articleMeta .= $t4 . "<p>" . $this->escapeXmlWithItalic($meta['abstractEs']) . "</p>\n";
             // Agrega contenido al texto acumulado en $articleMeta.
@@ -1826,7 +1937,7 @@ class DocxParser
             // Agrega contenido al texto acumulado en $articleMeta.
             $articleMeta .= $t3 . "<trans-abstract xml:lang=\"en\">\n";
             // Agrega contenido al texto acumulado en $articleMeta.
-            $articleMeta .= $t4 . "<title>Abstract</title>\n";
+            $articleMeta .= $t4 . "<title>ABSTRACT </title>\n";
             // Agrega contenido al texto acumulado en $articleMeta.
             $articleMeta .= $t4 . "<p>" . $this->escapeXmlWithItalic($meta['abstractEn']) . "</p>\n";
             // Agrega contenido al texto acumulado en $articleMeta.
@@ -1838,7 +1949,7 @@ class DocxParser
             // Agrega contenido al texto acumulado en $articleMeta.
             $articleMeta .= $t3 . "<kwd-group xml:lang=\"es\">\n";
             // Agrega contenido al texto acumulado en $articleMeta.
-            $articleMeta .= $t4 . "<title>Palabras claves:</title>\n";
+            $articleMeta .= $t4 . "<title>PALABRAS CLAVES:</title>\n";
             // Recorre $meta['kwdsEs'] para procesar cada elemento detectado.
             foreach ($meta['kwdsEs'] as $k) {
                 // Agrega contenido al texto acumulado en $articleMeta.
