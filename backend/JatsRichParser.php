@@ -742,10 +742,12 @@ class JatsRichParser
                 }
                 if (!empty($aMeta['orcid'])) {
                     $cid = $xpath->query('.//*[local-name()="contrib-id" and @contrib-id-type="orcid"]', $c)->item(0);
-                    // Preservar el formato del ORCID tal cual viene en el origen (con o sin URL).
+                    // Preservar el formato del ORCID del origen (con o sin URL): si el identificador
+                    // no cambió (ignorando el prefijo https://orcid.org/), no se toca el nodo.
                     $orcidVal = trim($aMeta['orcid']);
+                    $bare = function($s) { return strtolower(preg_replace('#^https?://orcid\.org/#i', '', trim((string)$s))); };
                     if ($cid) {
-                        if (trim($cid->textContent) !== $orcidVal) $setText($cid, $orcidVal);
+                        if ($bare($cid->textContent) !== $bare($orcidVal)) $setText($cid, $orcidVal);
                     } else {
                         $nid = $dom->createElement('contrib-id', $orcidVal);
                         $nid->setAttribute('contrib-id-type','orcid');
