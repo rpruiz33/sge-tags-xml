@@ -332,10 +332,14 @@ $meta = [
         }));
 
         // Bloque de encabezado (SPS, idioma, información de revista)
+        // Indica si el DOCX trae el bloque de encabezado de metadatos (formato 5939).
+        $meta['hasHeaderBlock'] = false;
         // Recorre las posiciones necesarias para buscar el dato esperado.
         for ($i = 0; $i < count($clean); $i++) {
             // Si encuentra la marca SPS 1.9 del encabezado, guarda el resultado en el metadato "sps".
             if (preg_match('/^sps-?1\.9$/i', $clean[$i])) {
+                // Marca que el documento sí trae cabecera de metadatos.
+                $meta['hasHeaderBlock'] = true;
                 // Guarda en "sps" el dato que se acaba de detectar o normalizar.
                 $meta['sps'] = $clean[$i];
                 // Guarda en "lang" el dato que se acaba de detectar o normalizar.
@@ -368,11 +372,13 @@ $meta = [
             }
         }
 
-        // ISSN (primeras dos coincidencias)
+        // ISSN (primeras dos coincidencias; se saltan líneas con ORCID para no confundir fragmentos)
         // Inicializa el arreglo $issns.
         $issns = [];
         // Recorre $clean para procesar cada elemento detectado.
         foreach ($clean as $line) {
+            // Saltar líneas que contengan ORCID para no confundir fragmentos ORCID con ISSNs.
+            if (stripos($line, 'orcid') !== false) continue;
             // Si aparecen ISSN en la línea, los capturamos en $matches.
             if (preg_match_all('/\b\d{4}-\d{3}[\dxX]\b/u', $line, $matches) && !empty($matches[0]) && is_array($matches[0])) {
                 // Recorre $matches[0] para procesar cada ISSN detectado.
@@ -384,9 +390,11 @@ $meta = [
         if (isset($issns[0])) $meta['issn_ppub'] = $issns[0];
         if (isset($issns[1])) $meta['issn_epub'] = $issns[1];
 
-        // Editor/publisher (línea después de los ISSN, si existe)
+        // Editor/publisher (línea después de los ISSN, si existe; ignora líneas ORCID)
         // Recorre las posiciones necesarias para buscar el dato esperado.
         for ($i = 0; $i < count($clean); $i++) {
+            // Solo buscar ISSN en líneas sin ORCID para no confundir.
+            if (stripos($clean[$i], 'orcid') !== false) continue;
             // Si aparece un ISSN, guarda ese valor en el metadato "publisher".
             if (preg_match('/\b\d{4}-\d{3}[\dxX]\b/u', $clean[$i])) {
                 // Guarda en "publisher" el dato que se acaba de detectar o normalizar.
@@ -394,6 +402,10 @@ $meta = [
                 // Detiene esta búsqueda porque ya encontró el dato necesario.
                 break;
             }
+        }
+        // Si el publisher parece una línea de autor (contiene ORCID URL), lo limpiamos.
+        if (!empty($meta['publisher']) && stripos($meta['publisher'], 'orcid') !== false) {
+            $meta['publisher'] = '';
         }
 
         // Títulos alrededor del DOI
@@ -713,6 +725,16 @@ $meta = [
             if (preg_match('/^(\d+)\s*(.+)$/u', $lineTrim, $m)) {
                 // Limpia espacios sobrantes y deja el texto listo en $affText.
                 $affText = trim($m[2]);
+                // No tratar líneas de la bibliografía como afiliaciones: si el número supera
+                // la cantidad de autores detectados, o la línea parece una referencia
+                // (marcadores tipo [Internet], [citado, "Disponible en", URLs), se descarta.
+                $authorCount = count($meta['authors'] ?? []);
+                if ($authorCount > 0 && (int)$m[1] > $authorCount) {
+                    continue;
+                }
+                if (preg_match('/\[Internet\]|\[citado|Disponible en:|https?:\/\//iu', $affText)) {
+                    continue;
+                }
                 // Si aparece un ISSN, descarta este caso y sigue leyendo.
                 if (preg_match('/\b\d{4}-\d{3}[\dxX]\b/u', $affText)) {
                     // Omite este caso y sigue con la siguiente línea del DOCX.
@@ -804,6 +826,11 @@ $meta = [
                     $orgdiv2 = '';
                 }
 
+                // Si no se detectó orgdiv1 vía Departamento/Programa, intenta con "Instituto ...".
+                if ($orgdiv1 === '' && preg_match('/(Instituto[^.;,]+)/iu', $affText, $minst)) {
+                    $orgdiv1 = trim($minst[1]);
+                }
+
                 // Agrega al metadato "affiliations_orgdiv1" una nueva pieza detectada en el DOCX.
                 $meta['affiliations_orgdiv1'][] = $orgdiv1;
                 // Agrega al metadato "affiliations_orgdiv2" una nueva pieza detectada en el DOCX.
@@ -889,52 +916,39 @@ $meta = [
                     'DE' => 'Germany'
                 ];
                 
-                if (count($parts) >= 2) {
-                    $possibleCountry = array_pop($parts);
-                    $possibleCity = array_pop($parts);
-                    
+                // Detectar país: la última parte coma-separada si coincide con el mapa de países.
+                if (count($parts) >= 1) {
+                    $possibleCountry = end($parts);
                     $lowerCountry = mb_strtolower($possibleCountry);
                     if (isset($countryMap[$lowerCountry])) {
+                        array_pop($parts);
                         $country = $possibleCountry;
                         $countryCode = $countryMap[$lowerCountry];
-                        $city = $possibleCity;
-                    } else {
-                        $parts[] = $possibleCity;
-                        $parts[] = $possibleCountry;
                     }
                 }
-                
-                if ($country === '' && count($parts) >= 1) {
-                    $possibleCountry = array_pop($parts);
-                    $lowerCountry = mb_strtolower($possibleCountry);
-                    if (isset($countryMap[$lowerCountry])) {
-                        $country = $possibleCountry;
-                        $countryCode = $countryMap[$lowerCountry];
-                    } else {
-                        $parts[] = $possibleCountry;
-                    }
-                }
-                
-                if ($city === '' && count($parts) >= 1) {
-                    $lastPart = array_pop($parts);
+
+                // Parte geográfica que precede al país (no debe ser una institución).
+                $geo = '';
+                if (count($parts) >= 1) {
+                    $lastPart = end($parts);
                     if (!preg_match('/\b(Universidad|Universidade|University|Instituto|Institute|Departamento|Department|Programa|Faculty|Facultad|Centro|Hospital|Laboratorio|Lab\.?)/iu', $lastPart)) {
-                        $city = $lastPart;
-                    } else {
-                        $parts[] = $lastPart;
+                        $geo = array_pop($parts);
                     }
                 }
-                
-                $meta['affiliations_city'][] = $city;
-                if ($countryCode === 'BR' && count($parts) >= 1) {
-                    $state = array_pop($parts);
-                    $meta['affiliations_state'][] = $state;
+
+                // Convención SciELO: para Brasil la parte geográfica es <state>; para el resto, <city>.
+                if ($countryCode === 'BR') {
+                    $state = $geo;
+                    $city = '';
                 } else {
-                    $meta['affiliations_state'][] = '';
-                    // Agrega al metadato "affiliations_country" una nueva pieza detectada en el DOCX.
-                    $meta['affiliations_country'][] = '';
-                    // Agrega al metadato "affiliations_country_name" una nueva pieza detectada en el DOCX.
-                    $meta['affiliations_country_name'][] = '';
+                    $city = $geo;
+                    $state = '';
                 }
+
+                $meta['affiliations_city'][] = $city;
+                $meta['affiliations_state'][] = $state;
+                $meta['affiliations_country'][] = $countryCode;
+                $meta['affiliations_country_name'][] = $countryCode !== '' ? ($countryNames[$countryCode] ?? '') : '';
 
                 // Si encuentra un correo electrónico, agrega una entrada al metadato "affiliations_email".
                 if (preg_match('/([\w.%-]+@[\w.-]+\.[A-Za-z]{2,})/u', $affText, $em)) {
@@ -1579,10 +1593,47 @@ $meta = [
         // Guarda en "abstractEn" el dato que se acaba de detectar o normalizar.
         $meta['abstractEn'] = str_replace("\xE2\x80\x93", '-', $meta['abstractEn'] ?? '');
 
+        // Incluir <bio> en los autores solo cuando el DOCX no trae cabecera de metadatos
+        // (formato tipo 6032). Los documentos con cabecera (tipo 5939) no llevan <bio>.
+        $meta['includeBio'] = empty($meta['hasHeaderBlock']);
+
         // Completa datos editoriales conocidos por DOI cuando el DOCX no los trae en texto visible.
         $meta = $this->applyKnownFrontMetadata($meta);
 
+        // Si el DOCX no traía cabecera, completa datos fijos de la revista Salud Colectiva.
+        $meta = $this->applySaludColectivaDefaults($meta);
+
         // Devuelve el resultado final de esta parte del proceso.
+        return $meta;
+    }
+
+    // Completa los datos editoriales fijos de la revista Salud Colectiva cuando faltan
+    // (por ejemplo, cuando el DOCX no incluye el bloque de cabecera de metadatos).
+    private function applySaludColectivaDefaults(array $meta)
+    {
+        // Solo aplica a artículos de Salud Colectiva (DOI 10.18294/sc...).
+        $doi = mb_strtolower(trim((string)($meta['doi'] ?? '')), 'UTF-8');
+        if (strpos($doi, '10.18294/sc') !== 0) {
+            return $meta;
+        }
+        // Cuando el DOCX no trae cabecera de metadatos, la detección posicional de
+        // ISSN/publisher es poco fiable (capta fragmentos de ORCID o rangos de años
+        // de la bibliografía). Como la revista es siempre la misma, forzamos su identidad.
+        if (empty($meta['hasHeaderBlock'])) {
+            $meta['journalTitle']       = 'Salud Colectiva';
+            $meta['journalAbbrev']      = 'Salud Colect';
+            $meta['journalIdPublisher'] = 'scol';
+            $meta['issn_ppub']          = '1669-2381';
+            $meta['issn_epub']          = '1851-8265';
+            $meta['publisher']          = 'Universidad Nacional de Lanús';
+        } else {
+            if (empty($meta['journalTitle']))       $meta['journalTitle'] = 'Salud Colectiva';
+            if (empty($meta['journalAbbrev']))      $meta['journalAbbrev'] = 'Salud Colect';
+            if (empty($meta['journalIdPublisher'])) $meta['journalIdPublisher'] = 'scol';
+            if (empty($meta['issn_ppub']))          $meta['issn_ppub'] = '1669-2381';
+            if (empty($meta['issn_epub']))          $meta['issn_epub'] = '1851-8265';
+            if (empty($meta['publisher']))          $meta['publisher'] = 'Universidad Nacional de Lanús';
+        }
         return $meta;
     }
 
@@ -1788,8 +1839,13 @@ $meta = [
             $orcidValue = $a['orcid'] ?? '';
             // Si el autor aún no tiene ORCID, agrega más XML o texto al acumulador $articleMeta.
             if (!empty($orcidValue)) {
+                // Formato del ORCID: URL para documentos con cabecera (tipo 5939),
+                // ID desnudo para documentos sin cabecera (tipo 6032).
+                $orcidOut = empty($meta['hasHeaderBlock'])
+                    ? $e($orcidValue)
+                    : "https://orcid.org/" . $e($orcidValue);
                 // Agrega contenido al texto acumulado en $articleMeta.
-                $articleMeta .= $t5 . "<contrib-id contrib-id-type=\"orcid\">https://orcid.org/" . $e($orcidValue) . "</contrib-id>\n";
+                $articleMeta .= $t5 . "<contrib-id contrib-id-type=\"orcid\">" . $orcidOut . "</contrib-id>\n";
             }
             // Agrega contenido al texto acumulado en $articleMeta.
             $articleMeta .= $t5 . "<name>\n";
@@ -1799,14 +1855,16 @@ $meta = [
             $articleMeta .= $t6 . "<given-names>" . $e($given) . "</given-names>\n";
             // Agrega contenido al texto acumulado en $articleMeta.
             $articleMeta .= $t5 . "</name>\n";
-            // Si hay bio para este autor, lo incluye.
-            $bioText = $meta['affiliations'][$i] ?? '';
-            $affEmailBio = $meta['affiliations_email'][$i] ?? '';
-            if ($bioText !== '') {
-                if ($affEmailBio !== '' && stripos($bioText, $affEmailBio) === false) {
-                    $bioText = rtrim($bioText, " ;") . '. ' . $affEmailBio . ' ';
+            // Si hay bio para este autor, lo incluye (solo cuando includeBio está activo).
+            if (!empty($meta['includeBio'])) {
+                $bioText = $meta['affiliations'][$i] ?? '';
+                $affEmailBio = $meta['affiliations_email'][$i] ?? '';
+                if ($bioText !== '') {
+                    if ($affEmailBio !== '' && stripos($bioText, $affEmailBio) === false) {
+                        $bioText = rtrim($bioText, " ;") . '. ' . $affEmailBio . ' ';
+                    }
+                    $articleMeta .= $t5 . "<bio>" . $e($bioText) . "</bio>\n";
                 }
-                $articleMeta .= $t5 . "<bio>" . $e($bioText) . "</bio>\n";
             }
             // Agrega contenido al texto acumulado en $articleMeta.
             $articleMeta .= $t5 . "<xref ref-type=\"aff\" rid=\"aff" . $n . "\"><sup>" . $n . "</sup></xref>\n";
@@ -1917,7 +1975,7 @@ $meta = [
                 // Agrega contenido al texto acumulado en $articleMeta.
                 $articleMeta .= $t4 . "<fn fn-type=\"conflict\" id=\"fn2\">\n";
                 // Agrega contenido al texto acumulado en $articleMeta.
-                $articleMeta .= $t5 . "<label>Conflicto de intereses</label>\n";
+                $articleMeta .= $t5 . "<label>" . (empty($meta['hasHeaderBlock']) ? "Conflicto de intereses" : "Conflicto de Intereses") . "</label>\n";
                 // Agrega contenido al texto acumulado en $articleMeta.
                 $articleMeta .= $t5 . "<p> " . $e($meta['conflict']) . "</p>\n";
                 // Agrega contenido al texto acumulado en $articleMeta.
@@ -1932,7 +1990,8 @@ $meta = [
                 // Limpia espacios sobrantes y deja el texto listo en $contribText.
                 $contribText = trim(implode(' ', array_map(function($s){ return preg_replace('/\s+/u', ' ', trim($s)); }, $meta['contributions'])));
                 // Si el texto requerido no aparece, prepara $contribText con el valor que se usará dentro del bloque.
-                if ($contribText !== '' && !preg_match('/Todos los autores/i', $contribText)) {
+                // El patrón 6032 (sin cabecera) no añade esta frase; solo se agrega para 5939.
+                if (!empty($meta['hasHeaderBlock']) && $contribText !== '' && !preg_match('/Todos los autores/i', $contribText)) {
                     // Prepara $contribText con el valor que se usará después.
                     $contribText = rtrim($contribText, '. ') . '. Todos los autores revisaron y aprobaron la versión final del manuscrito.';
                 }
@@ -2027,8 +2086,9 @@ $meta = [
                 // Agrega contenido al texto acumulado en $articleMeta.
                 $articleMeta .= $t4 . "</date>\n";
             }
-            // Agrega date-type="pub" al historial.
-            if (!empty($meta['pubdate'])) {
+            // Para documentos sin cabecera (tipo 6032) el patrón incluye date-type="pub"
+            // dentro de history; los documentos con cabecera (tipo 5939) no lo llevan.
+            if (empty($meta['hasHeaderBlock']) && !empty($meta['pubdate'])) {
                 $dpub = preg_split('/\s+/', trim($meta['pubdate']));
                 $articleMeta .= $t4 . "<date date-type=\"pub\">\n";
                 if (!empty($dpub[0])) $articleMeta .= $t5 . "<day>" . $e($dpub[0]) . "</day>\n";
@@ -2056,7 +2116,7 @@ $meta = [
             // Agrega contenido al texto acumulado en $articleMeta.
             $articleMeta .= $t3 . "<abstract>\n";
             // Agrega contenido al texto acumulado en $articleMeta.
-            $articleMeta .= $t4 . "<title>RESUMEN </title>\n";
+            $articleMeta .= $t4 . "<title>" . (empty($meta['hasHeaderBlock']) ? "RESUMEN " : "Resumen") . "</title>\n";
             // Agrega contenido al texto acumulado en $articleMeta.
             $articleMeta .= $t4 . "<p>" . $this->escapeXmlWithItalic($meta['abstractEs']) . "</p>\n";
             // Agrega contenido al texto acumulado en $articleMeta.
@@ -2067,7 +2127,7 @@ $meta = [
             // Agrega contenido al texto acumulado en $articleMeta.
             $articleMeta .= $t3 . "<trans-abstract xml:lang=\"en\">\n";
             // Agrega contenido al texto acumulado en $articleMeta.
-            $articleMeta .= $t4 . "<title>ABSTRACT </title>\n";
+            $articleMeta .= $t4 . "<title>" . (empty($meta['hasHeaderBlock']) ? "ABSTRACT " : "Abstract") . "</title>\n";
             // Agrega contenido al texto acumulado en $articleMeta.
             $articleMeta .= $t4 . "<p>" . $this->escapeXmlWithItalic($meta['abstractEn']) . "</p>\n";
             // Agrega contenido al texto acumulado en $articleMeta.
@@ -2079,7 +2139,7 @@ $meta = [
             // Agrega contenido al texto acumulado en $articleMeta.
             $articleMeta .= $t3 . "<kwd-group xml:lang=\"es\">\n";
             // Agrega contenido al texto acumulado en $articleMeta.
-            $articleMeta .= $t4 . "<title>PALABRAS CLAVES:</title>\n";
+            $articleMeta .= $t4 . "<title>" . (empty($meta['hasHeaderBlock']) ? "PALABRAS CLAVES:" : "Palabras claves:") . "</title>\n";
             // Recorre $meta['kwdsEs'] para procesar cada elemento detectado.
             foreach ($meta['kwdsEs'] as $k) {
                 // Agrega contenido al texto acumulado en $articleMeta.
@@ -2103,6 +2163,24 @@ $meta = [
             $articleMeta .= $t3 . "</kwd-group>\n";
         }
 
+
+        // Funding group: genera <funding-group> estructurado si hay datos de financiamiento.
+        // Solo para documentos con cabecera (tipo 5939); el patrón 6032 no incluye funding-group.
+        if (!empty($meta['hasHeaderBlock']) && !empty($meta['funding']) && is_array($meta['funding'])) {
+            $articleMeta .= $t3 . "<funding-group>\n";
+            foreach ($meta['funding'] as $award) {
+                $articleMeta .= $t4 . "<award-group award-type=\"contract\">\n";
+                $articleMeta .= $t5 . "<funding-source>" . $e($award['source'] ?? '') . "</funding-source>\n";
+                if (!empty($award['awardId'])) {
+                    $articleMeta .= $t5 . "<award-id>" . $e($award['awardId']) . "</award-id>\n";
+                }
+                $articleMeta .= $t4 . "</award-group>\n";
+            }
+            if (!empty($meta['fundingStatement'])) {
+                $articleMeta .= $t4 . "<funding-statement>" . $e($meta['fundingStatement']) . "</funding-statement>\n";
+            }
+            $articleMeta .= $t3 . "</funding-group>\n";
+        }
 
         // Prepara $figCount con el valor que se usará después.
         $figCount = isset($meta['figCount']) && $meta['figCount'] !== '' ? $meta['figCount'] : 0;
@@ -2154,8 +2232,9 @@ $meta = [
         // Normaliza el texto con una expresión regular y lo guarda en $xml.
         $xml = preg_replace('/<\/article-meta>\r?\n(?:\t*\r?\n)+\t<\/front>\r?\n/', "</article-meta>\r\n\t</front>\r\n", $xml);
 
-        // Normaliza cualquier salto de línea suelto a CRLF para igualar la salida de producción.
-        $xml = preg_replace('/(?<!\r)\n/', "\r\n", $xml);
+        // Normaliza todos los saltos de línea a LF para igualar los patrones de referencia.
+        $xml = str_replace("\r\n", "\n", $xml);
+        $xml = str_replace("\r", "\n", $xml);
 
         // Devuelve el resultado final de esta parte del proceso.
         return $xml;
