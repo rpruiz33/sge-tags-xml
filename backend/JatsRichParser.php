@@ -417,14 +417,6 @@ class JatsRichParser
 
         // --- Actualización de Nodos en Front-Matter (<front>) ---
 
-        // --- Remove redundant funding elements under article-meta ---
-        $fundingNodes = $xpath->query('//*[local-name()="article-meta"]//*[local-name()="funding-group"] | //*[local-name()="article-meta"]//*[local-name()="award-group"] | //*[local-name()="article-meta"]//*[local-name()="funding-source"] | //*[local-name()="article-meta"]//*[local-name()="funding-statement"]');
-        foreach ($fundingNodes as $fnNode) {
-            if ($fnNode->parentNode) {
-                $fnNode->parentNode->removeChild($fnNode);
-            }
-        }
-
         if (!empty($meta['articleTitle'])) {
             $t = $xpath->query('//*[local-name()="article-meta"]/*[local-name()="title-group"]/*[local-name()="article-title"]')->item(0);
             if ($t) $setText($t, $meta['articleTitle']);
@@ -480,16 +472,14 @@ class JatsRichParser
 
         if (isset($meta['abstractEs'])) {
             $abs = $xpath->query('//*[local-name()="article-meta"]//*[local-name()="abstract"]')->item(0);
-            if ($abs) {
+            // Solo reescribir el resumen si realmente cambió respecto al original
+            // (se compara contra el textContent completo del <abstract>, que es lo que extrae el parser).
+            if ($abs && trim($abs->textContent) !== trim($meta['abstractEs'])) {
                 $pNode = $xpath->query('.//*[local-name()="p"]', $abs)->item(0);
                 if ($pNode) {
-                    if (trim($pNode->textContent) !== trim($meta['abstractEs'])) {
-                        $setText($pNode, $meta['abstractEs']);
-                    }
+                    $setText($pNode, $meta['abstractEs']);
                 } else {
-                    if (trim($abs->textContent) !== trim($meta['abstractEs'])) {
-                        $setText($abs, $meta['abstractEs']);
-                    }
+                    $setText($abs, $meta['abstractEs']);
                 }
             }
         }
@@ -498,10 +488,16 @@ class JatsRichParser
             $kg = $xpath->query('//*[local-name()="article-meta"]//*[local-name()="kwd-group" and (@xml:lang="es" or not(@xml:lang))]')->item(0);
             if ($kg) {
                 $existing = $xpath->query('.//*[local-name()="kwd"]', $kg);
-                foreach ($existing as $e) $e->parentNode->removeChild($e);
-                foreach ($meta['kwdsEs'] as $kw) {
-                    $el = $dom->createElement('kwd', $kw);
-                    $kg->appendChild($el);
+                $existingVals = [];
+                foreach ($existing as $e) $existingVals[] = trim($e->textContent);
+                $newVals = array_map('strval', array_values($meta['kwdsEs']));
+                // Solo reconstruir si las palabras clave cambiaron
+                if ($existingVals !== $newVals) {
+                    foreach ($existing as $e) $e->parentNode->removeChild($e);
+                    foreach ($meta['kwdsEs'] as $kw) {
+                        $el = $dom->createElement('kwd', $kw);
+                        $kg->appendChild($el);
+                    }
                 }
             }
         }
@@ -510,10 +506,16 @@ class JatsRichParser
             $kg = $xpath->query('//*[local-name()="article-meta"]//*[local-name()="kwd-group" and @xml:lang="en"]')->item(0);
             if ($kg) {
                 $existing = $xpath->query('.//*[local-name()="kwd"]', $kg);
-                foreach ($existing as $e) $e->parentNode->removeChild($e);
-                foreach ($meta['kwdsEn'] as $kw) {
-                    $el = $dom->createElement('kwd', $kw);
-                    $kg->appendChild($el);
+                $existingVals = [];
+                foreach ($existing as $e) $existingVals[] = trim($e->textContent);
+                $newVals = array_map('strval', array_values($meta['kwdsEn']));
+                // Solo reconstruir si las palabras clave cambiaron
+                if ($existingVals !== $newVals) {
+                    foreach ($existing as $e) $e->parentNode->removeChild($e);
+                    foreach ($meta['kwdsEn'] as $kw) {
+                        $el = $dom->createElement('kwd', $kw);
+                        $kg->appendChild($el);
+                    }
                 }
             }
         }
@@ -523,6 +525,12 @@ class JatsRichParser
             $i = 0;
             foreach ($affs as $a) {
                 if (!isset($meta['affiliations'][$i])) { $i++; continue; }
+
+                // Si el texto de la afiliación no cambió respecto al original,
+                // no reconstruir el nodo: así se preserva su estructura y formato exactos.
+                $origInstNode = $xpath->query('.//*[local-name()="institution" and @content-type="original"]', $a)->item(0);
+                $origInstText = $origInstNode ? trim($origInstNode->textContent) : trim($a->textContent);
+                if ($origInstText === trim((string)$meta['affiliations'][$i])) { $i++; continue; }
                 
                 // Keep label if it exists
                 $labelNode = $xpath->query('.//*[local-name()="label"]', $a)->item(0);
@@ -734,12 +742,11 @@ class JatsRichParser
                 }
                 if (!empty($aMeta['orcid'])) {
                     $cid = $xpath->query('.//*[local-name()="contrib-id" and @contrib-id-type="orcid"]', $c)->item(0);
+                    // Preservar el formato del ORCID tal cual viene en el origen (con o sin URL).
                     $orcidVal = trim($aMeta['orcid']);
-                    if (!preg_match('/^https?:\/\//i', $orcidVal)) {
-                        $orcidVal = 'https://orcid.org/' . $orcidVal;
-                    }
-                    if ($cid) $setText($cid, $orcidVal);
-                    else {
+                    if ($cid) {
+                        if (trim($cid->textContent) !== $orcidVal) $setText($cid, $orcidVal);
+                    } else {
                         $nid = $dom->createElement('contrib-id', $orcidVal);
                         $nid->setAttribute('contrib-id-type','orcid');
                         $c->appendChild($nid);
@@ -751,6 +758,13 @@ class JatsRichParser
 
         // Guardamos el XML base modificado (aquí el front está actualizado, pero el body quedó mutado por DOM)
         $xml = $dom->saveXML();
+
+        // Preservar la cabecera original (declaración XML, DOCTYPE y etiqueta <article>)
+        // tal cual venía: DOMDocument reformatea el DOCTYPE y reordena los namespaces.
+        if (preg_match('/<article\b[^>]*>/s', $originalXml, $om, PREG_OFFSET_CAPTURE)) {
+            $origHeader = substr($originalXml, 0, $om[0][1] + strlen($om[0][0]));
+            $xml = preg_replace('/^.*?<article\b[^>]*>/s', addcslashes($origHeader, '$\\'), $xml, 1);
+        }
 
         // 2. Inyección Directa: Se pisan los bloques body y back mutados con el texto exacto original
         if (!empty($bodyContent)) {
@@ -771,6 +785,10 @@ class JatsRichParser
                 $xml
             );
         }
+
+        // Preservar el espacio final exacto del original (DOMDocument agrega un salto de línea tras </article>)
+        $origTrailing = substr($originalXml, strlen(rtrim($originalXml)));
+        $xml = rtrim($xml) . $origTrailing;
 
         return $xml;
     }
