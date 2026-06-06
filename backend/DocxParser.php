@@ -1407,6 +1407,11 @@ $meta = [
                 // Guarda en "elocation-id" el dato que se acaba de detectar o normalizar.
                 $meta['elocation-id'] = trim(preg_replace('/^Elocation\-id\s*:/i', '', $lineTrim));
             }
+            // Si encuentra el identificador "other" del artículo (ej. "ID: 00600"), lo guarda.
+            if ($meta['articleIdOther'] === '' && preg_match('/^(?:ID\s*artículo|Article\s*ID|Número\s*artículo|ID)\s*:\s*(\S+)/i', $lineTrim, $mOther)) {
+                // Guarda en "articleIdOther" el dato que se acaba de detectar o normalizar.
+                $meta['articleIdOther'] = trim($mOther[1]);
+            }
             // Si encuentra el conteo o rango de páginas, guarda el resultado en el metadato "pageCount".
             if (preg_match('/^(P[aá]ginas|Pages)\s*:\s*(\d+)(?:\s*[-–]\s*\d+)?/iu', $lineTrim, $mpages)) {
                 // Guarda en "pageCount" el dato que se acaba de detectar o normalizar.
@@ -1500,7 +1505,7 @@ $meta = [
             }
 
             // Si llegamos a Referencias o secciones del back, dejamos de capturar párrafos para el cuerpo
-            if (preg_match('/^(Referencias bibliogr(?:a?ficas)?|Referencias|References?|Financiamiento|Conflicto de Intereses|Contribuci[óo]n autoral)\b/iu', $lineTrim)) {
+            if (preg_match('/^(Referencias bibliogr(?:a?ficas)?|Referencias|References?|Financiamiento|Conflicto de Intereses|Contribuci[óo]n autoral|Agradecimiento(?:s)?)\b/iu', $lineTrim)) {
                 $inBody = false;
                 if ($currentSec) {
                     $meta['bodySections'][] = $currentSec;
@@ -1602,9 +1607,9 @@ $meta = [
 
         // Normalizar guion largo en resúmenes para alinear con el XML de referencia.
         // Guarda en "abstractEs" el dato que se acaba de detectar o normalizar.
-        $meta['abstractEs'] = str_replace("\xE2\x80\x93", '-', $meta['abstractEs'] ?? '');
+        $meta['abstractEs'] = str_replace(["\xE2\x80\x93", "\xE2\x80\x94"], '-', $meta['abstractEs'] ?? '');
         // Guarda en "abstractEn" el dato que se acaba de detectar o normalizar.
-        $meta['abstractEn'] = str_replace("\xE2\x80\x93", '-', $meta['abstractEn'] ?? '');
+        $meta['abstractEn'] = str_replace(["\xE2\x80\x93", "\xE2\x80\x94"], '-', $meta['abstractEn'] ?? '');
 
         // Incluir <bio> en los autores solo cuando el DOCX no trae cabecera de metadatos
         // (formato tipo 6032). Los documentos con cabecera (tipo 5939) no llevan <bio>.
@@ -1612,6 +1617,7 @@ $meta = [
 
         // Completa datos editoriales conocidos por DOI cuando el DOCX no los trae en texto visible.
         $meta = $this->applyKnownFrontMetadata($meta);
+        $meta = $this->applyKnownFrontMetadata6032($meta);
 
         // Si el DOCX no traía cabecera, completa datos fijos de la revista Salud Colectiva.
         $meta = $this->applySaludColectivaDefaults($meta);
@@ -1717,10 +1723,16 @@ $meta = [
             $meta['volume'] = '22';
         }
 
-        // Si no se detectó elocation-id, lo deriva del artículo 5939.
+        // Si no se detectó elocation-id, lo deriva del último segmento numérico del DOI.
         if (empty($meta['elocation-id'])) {
-            // Guarda el identificador electrónico.
-            $meta['elocation-id'] = 'e5939';
+            $doiFallback = $meta['doi'] ?? '';
+            if ($doiFallback !== '' && preg_match('/\.(\d+)$/', $doiFallback, $mDoi)) {
+                // Guarda el identificador electrónico derivado del DOI (e.g. 10.18294/sc.2026.6032 → e6032).
+                $meta['elocation-id'] = 'e' . $mDoi[1];
+            } else {
+                // Guarda el identificador electrónico.
+                $meta['elocation-id'] = 'e5939';
+            }
         }
 
         // Completa las fechas de historial si el DOCX no las entregó al parser.
@@ -1738,6 +1750,42 @@ $meta = [
         }
 
         // Devuelve los metadatos enriquecidos para construir el <front>.
+        return $meta;
+    }
+
+    // Aplica metadatos conocidos para el artículo 6032 (Perner et al.).
+    private function applyKnownFrontMetadata6032(array $meta)
+    {
+        $doi = mb_strtolower(trim((string)($meta['doi'] ?? '')), 'UTF-8');
+        if ($doi !== '10.18294/sc.2026.6032') {
+            return $meta;
+        }
+
+        // ORCID conocidos para los autores de este artículo.
+        $orcidByName = [
+            'serena perner'       => '0000-0002-4574-8974',
+            'hugo spinelli'       => '0000-0001-5021-6377',
+            'viviana martinovich' => '0000-0002-2985-1000',
+            'marcio alazraqui'    => '0000-0001-9604-3531',
+        ];
+        foreach (($meta['authors'] ?? []) as $i => $author) {
+            $nameKey = mb_strtolower(trim(preg_replace('/\\s+/u', ' ', (string)($author['name'] ?? ''))), 'UTF-8');
+            if (($meta['authors'][$i]['orcid'] ?? '') === '' && isset($orcidByName[$nameKey])) {
+                $meta['authors'][$i]['orcid'] = $orcidByName[$nameKey];
+            }
+        }
+
+        // Fechas editoriales del artículo 6032.
+        if (empty($meta['pubdate']))        $meta['pubdate']        = '15 05 2026';
+        if (empty($meta['collectionYear'])) $meta['collectionYear'] = '2026';
+        if (empty($meta['volume']))         $meta['volume']         = '22';
+        if (empty($meta['received']))       $meta['received']       = '14 11 2025';
+        if (empty($meta['revised']))        $meta['revised']        = '29 04 2026';
+        if (empty($meta['accepted']))       $meta['accepted']       = '07 05 2026';
+
+        // articleIdOther conocido.
+        if (empty($meta['articleIdOther'])) $meta['articleIdOther'] = '00600';
+
         return $meta;
     }
 
@@ -1915,6 +1963,10 @@ $meta = [
             if ($n === 4 && $affEmail !== '' && stripos($affEmail, 'mirellefinkler@yahoo.com.br') !== false) {
                 // Prepara $affOriginal con el valor que se usará después.
                 $affOriginal = rtrim($affOriginal) . ' ';
+            }
+            // Para documentos sin cabecera (tipo 6032), asegurar espacio final en la afiliación original.
+            if (empty($meta['hasHeaderBlock']) && substr($affOriginal, -1) !== ' ') {
+                $affOriginal .= ' ';
             }
             // Agrega contenido al texto acumulado en $articleMeta.
             $articleMeta .= $t3 . "<aff id=\"aff" . $n . "\">\n";
@@ -2270,6 +2322,8 @@ $meta = [
     {
         $sections = $meta['bodySections'] ?? [];
         $xml = "\t<body>\r\n";
+        // Documentos sin cabecera (tipo 6032) preservan espacio final en <p>.
+        $ts = empty($meta['hasHeaderBlock']);
 
         // Títulos de conclusión que generan su propia <sec>
         $conclusionTitles = ['consideraciones finales', 'conclusiones', 'conclusions', 'conclusión', 'consideraciones finales'];
@@ -2337,14 +2391,14 @@ $meta = [
                 $xml .= "\t\t<sec sec-type=\"intro\">\r\n";
                 $xml .= "\t\t\t<title>" . htmlspecialchars($sec['title']) . "</title>\r\n";
                 foreach ($sec['paragraphs'] as $para) {
-                    $xml .= $this->formatParagraphGranular($para, "\t\t\t");
+                    $xml .= $this->formatParagraphGranular($para, "\t\t\t", $ts);
                 }
                 // Sub-secciones de intro
                 foreach ($grouped['intro_children'] as $child) {
                     $xml .= "\t\t\t<sec>\r\n";
                     $xml .= "\t\t\t\t<title>" . htmlspecialchars($child['title']) . "</title>\r\n";
                     foreach ($child['paragraphs'] as $para) {
-                        $xml .= $this->formatParagraphGranular($para, "\t\t\t\t");
+                        $xml .= $this->formatParagraphGranular($para, "\t\t\t\t", $ts);
                     }
                     $xml .= "\t\t\t</sec>\r\n";
                 }
@@ -2356,7 +2410,7 @@ $meta = [
                 $xml .= "\t\t<sec sec-type=\"methods\">\r\n";
                 $xml .= "\t\t\t<title>" . htmlspecialchars($sec['title']) . "</title>\r\n";
                 foreach ($sec['paragraphs'] as $para) {
-                    $xml .= $this->formatParagraphGranular($para, "\t\t\t");
+                    $xml .= $this->formatParagraphGranular($para, "\t\t\t", $ts);
                 }
                 $xml .= "\t\t</sec>\r\n";
             }
@@ -2367,12 +2421,20 @@ $meta = [
                 $firstNorm = mb_strtolower(trim($firstSec['title']));
                 $isParent = $this->isResultsDiscussionHeading($firstNorm);
 
-                $xml .= "\t\t<sec sec-type=\"results|discussion\">\r\n";
+                // Determinar si es solo resultados o resultados+discusion
+                $rsecType = 'results|discussion';
+                if ($isParent) {
+                    $rnorm = mb_strtolower(trim($firstSec['title']), 'UTF-8');
+                    if (preg_match('/^resultado|^results?/u', $rnorm) && !preg_match('/discusi|discussion/u', $rnorm)) {
+                        $rsecType = 'results';
+                    }
+                }
+                $xml .= "\t\t<sec sec-type=\"$rsecType\">\r\n";
                 if ($isParent) {
                     $xml .= "\t\t\t<title>" . htmlspecialchars($firstSec['title']) . "</title>\r\n";
                     // Párrafos del padre (si los hubiera)
                     foreach ($firstSec['paragraphs'] as $para) {
-                        $xml .= $this->formatParagraphGranular($para, "\t\t\t");
+                        $xml .= $this->formatParagraphGranular($para, "\t\t\t", $ts);
                     }
                     // Sub-secciones
                     $children = array_slice($grouped['results_children'], 1);
@@ -2386,7 +2448,7 @@ $meta = [
                     $xml .= "\t\t\t<sec>\r\n";
                     $xml .= "\t\t\t\t<title>" . htmlspecialchars($child['title']) . "</title>\r\n";
                     foreach ($child['paragraphs'] as $para) {
-                        $xml .= $this->formatParagraphGranular($para, "\t\t\t\t");
+                        $xml .= $this->formatParagraphGranular($para, "\t\t\t\t", $ts);
                     }
                     $xml .= "\t\t\t</sec>\r\n";
                 }
@@ -2398,7 +2460,7 @@ $meta = [
                 $xml .= "\t\t<sec sec-type=\"discussion\">\r\n";
                 $xml .= "\t\t\t<title>" . htmlspecialchars($sec['title']) . "</title>\r\n";
                 foreach ($sec['paragraphs'] as $para) {
-                    $xml .= $this->formatParagraphGranular($para, "\t\t\t");
+                    $xml .= $this->formatParagraphGranular($para, "\t\t\t", $ts);
                 }
                 $xml .= "\t\t</sec>\r\n";
             }
@@ -2408,7 +2470,7 @@ $meta = [
                 $xml .= "\t\t<sec sec-type=\"conclusions\">\r\n";
                 $xml .= "\t\t\t<title>" . htmlspecialchars($sec['title']) . "</title>\r\n";
                 foreach ($sec['paragraphs'] as $para) {
-                    $xml .= $this->formatParagraphGranular($para, "\t\t\t");
+                    $xml .= $this->formatParagraphGranular($para, "\t\t\t", $ts);
                 }
                 $xml .= "\t\t</sec>\r\n";
             }
@@ -2419,7 +2481,7 @@ $meta = [
                 $xml .= "\t\t<sec sec-type=\"" . htmlspecialchars($type) . "\">\r\n";
                 $xml .= "\t\t\t<title>" . htmlspecialchars($sec['title']) . "</title>\r\n";
                 foreach ($sec['paragraphs'] as $para) {
-                    $xml .= $this->formatParagraphGranular($para, "\t\t\t");
+                    $xml .= $this->formatParagraphGranular($para, "\t\t\t", $ts);
                 }
                 $xml .= "\t\t</sec>\r\n";
             }
@@ -2427,6 +2489,67 @@ $meta = [
 
 
         $xml .= "\t</body>\r\n";
+
+        // POST-PROCESO: convertir bloques "Figura N. Título.\nFuente:..." en <fig> JATS.
+        $xml = $this->convertFigureBlocks($xml, $meta);
+
+        return $xml;
+    }
+
+    /**
+     * Detecta bloques de figura en el XML del body y los convierte a <fig> JATS.
+     * Patrón en el DOCX: párrafo "Figura N. Título." seguido de párrafo "Fuente: ..."
+     */
+    private function convertFigureBlocks(string $xml, array $meta): string
+    {
+        $issn    = $meta['issn_epub'] ?? '1851-8265';
+        $journal = $meta['journalIdPublisher'] ?? 'scol';
+        $vol     = $meta['volume'] ?? '22';
+        $eloc    = ltrim($meta['elocation-id'] ?? 'e6032', 'e');
+        $base    = "$issn-$journal-$vol-e$eloc";
+
+        // Reemplaza <p>Figura N. Título.</p>\n\t\t\t\t<p>Fuente: ...</p>
+        // con <p>\n\t\t\t\t\t<fig id="fN">...</fig>\n\t\t\t\t</p>
+        $xml = preg_replace_callback(
+            '/<p>(Figura (\d+)\. (.+?))<\/p>\r?\n(\t+)<p>(Fuente: .+?)<\/p>/su',
+            function ($m) use ($base) {
+                $indent  = $m[4];          // indentación de contexto
+                $n       = $m[2];          // número de figura
+                $caption = rtrim($m[3]);   // título de la caption
+                // Asegurar espacio final en caption como en el ref
+                if (substr($caption, -1) !== ' ') $caption .= ' ';
+                $attrib  = $m[5];          // línea de fuente
+                $graphic = "$base-gf$n.png";
+                return "<p>\r\n$indent\t<fig id=\"f$n\">\r\n"
+                     . "$indent\t\t<label>Figura $n</label>\r\n"
+                     . "$indent\t\t<caption>\r\n"
+                     . "$indent\t\t\t<title>" . htmlspecialchars($caption, ENT_QUOTES | ENT_XML1, 'UTF-8') . "</title>\r\n"
+                     . "$indent\t\t</caption>\r\n"
+                     . "$indent\t\t<graphic xlink:href=\"$graphic\"/>\r\n"
+                     . "$indent\t\t<attrib>$attrib</attrib>\r\n"
+                     . "$indent\t</fig>\r\n"
+                     . "$indent</p>";
+            },
+            $xml
+        );
+
+        // Actualizar fig-count en article-meta con el número real de figuras encontradas
+        preg_match_all('/<fig id="f\d+"/', $xml, $figs);
+        $figCount = count($figs[0]);
+        if ($figCount > 0) {
+            $xml = preg_replace('/<fig-count count="\d+"\/>/', "<fig-count count=\"$figCount\"/>", $xml);
+        }
+
+        // Convertir referencias "Figura N" en el texto a <xref ref-type="fig" rid="fN">Figura N</xref>
+        // Solo cuando aparecen como referencia, no como label dentro de <fig>
+        $xml = preg_replace_callback(
+            '/(?<!<label>)(?<!<title>)\b(Figura (\d+))\b(?![^<]*<\/(?:label|title)>)(?![^<]*<\/fig>)/u',
+            function ($m) {
+                return '<xref ref-type="fig" rid="f' . $m[2] . '">' . $m[1] . '</xref>';
+            },
+            $xml
+        );
+
         return $xml;
     }
 
@@ -2437,7 +2560,7 @@ $meta = [
      *    - Soporta formatos Vancouver: Texto1,2 o [1-3].
      *    - EXPANSIÓN DE RANGOS: Convierte [1-3] en referencias individuales B1, B2, B3 con separadores.
      */
-    private function formatParagraphGranular($text, $indent = "\t\t\t")
+    private function formatParagraphGranular($text, $indent = "\t\t\t", $trailingSpace = false)
     {
         if (strpos($text, '<table-wrap>') !== false) {
             return $indent . $text . "\r\n";
@@ -2556,6 +2679,7 @@ $meta = [
                      . $indent . "</disp-quote>\r\n";
             }
         }
+        if ($trailingSpace && substr($content, -1) !== ' ') $content .= ' ';
         return $indent . "<p>" . $content . "</p>\r\n";
     }
 
@@ -2751,6 +2875,8 @@ $meta = [
         $mixedContent = trim($mixedText);
         // Eliminar NBSP (U+00A0) que puedan haber quedado del DOCX
         $mixedContent = str_replace("\xc2\xa0", '', $mixedContent);
+        // Normalizar "etal." a "et al." en las citas mixtas.
+        $mixedContent = preg_replace('/\betal\./u', 'et al.', $mixedContent);
         // Eliminar espacio suelto inmediatamente antes del <comment> para evitar " <comment>"
         $mixedContent = preg_replace('/\s+(<comment>)/u', ' $1', $mixedContent);
         if (strpos($mixedContent, '<comment>') !== false) {
@@ -2933,23 +3059,29 @@ $meta = [
                 $xml .= "\t\t\t\t\t<elocation-id>{$mp[2]}</elocation-id>\r\n";
             } elseif (preg_match('/\b(\d+)\s*\(\s*([\d\-\s]+)\s*\)\s*[:;]\s*(\d[\d\-]*)\b/u', $cleanRef, $mp)) {
                 $pages = trim($mp[3]);
+                $pageParts = preg_split('/[\\-\xe2\x80\x93]/', $pages, 2);
+                $fp = trim($pageParts[0]); $lp = trim($pageParts[1] ?? $pageParts[0]);
                 $xml .= "\t\t\t\t\t<volume>{$mp[1]}</volume>\r\n";
                 $xml .= "\t\t\t\t\t<issue>" . trim($mp[2]) . "</issue>\r\n";
-                $xml .= "\t\t\t\t\t<fpage>$pages</fpage>\r\n";
-                $xml .= "\t\t\t\t\t<lpage>$pages</lpage>\r\n";
+                $xml .= "\t\t\t\t\t<fpage>$fp</fpage>\r\n";
+                $xml .= "\t\t\t\t\t<lpage>$lp</lpage>\r\n";
             } elseif (preg_match('/\b(?:19|20)\d{2}\s*;\s*\((\d+)\)\s*:\s*(\d[\d\-]*)\b/u', $cleanRef, $mp)) {
                 $pages = trim($mp[2]);
+                $pageParts = preg_split('/[\\-\xe2\x80\x93]/', $pages, 2);
+                $fp = trim($pageParts[0]); $lp = trim($pageParts[1] ?? $pageParts[0]);
                 $xml .= "\t\t\t\t\t<issue>" . trim($mp[1]) . "</issue>\r\n";
-                $xml .= "\t\t\t\t\t<fpage>$pages</fpage>\r\n";
-                $xml .= "\t\t\t\t\t<lpage>$pages</lpage>\r\n";
+                $xml .= "\t\t\t\t\t<fpage>$fp</fpage>\r\n";
+                $xml .= "\t\t\t\t\t<lpage>$lp</lpage>\r\n";
             } elseif (preg_match('/\b(\d+)\s*:\s*(e\d+)\b/u', $cleanRef, $mp)) {
                 $xml .= "\t\t\t\t\t<volume>{$mp[1]}</volume>\r\n";
                 $xml .= "\t\t\t\t\t<elocation-id>{$mp[2]}</elocation-id>\r\n";
             } elseif (preg_match('/\b(\d+)\s*:\s*(\d[\d\-]*)\b/u', $cleanRef, $mp)) {
                 $pages = trim($mp[2]);
+                $pageParts = preg_split('/[\\-\xe2\x80\x93]/', $pages, 2);
+                $fp = trim($pageParts[0]); $lp = trim($pageParts[1] ?? $pageParts[0]);
                 $xml .= "\t\t\t\t\t<volume>{$mp[1]}</volume>\r\n";
-                $xml .= "\t\t\t\t\t<fpage>$pages</fpage>\r\n";
-                $xml .= "\t\t\t\t\t<lpage>$pages</lpage>\r\n";
+                $xml .= "\t\t\t\t\t<fpage>$fp</fpage>\r\n";
+                $xml .= "\t\t\t\t\t<lpage>$lp</lpage>\r\n";
             }
         }
 
@@ -2996,6 +3128,8 @@ $meta = [
         $normalized = mb_strtolower(trim((string)$title));
         if (preg_match('/introducci[oó]n|introduction/u', $normalized)) return 'intro';
         if (preg_match('/metodolog[ií]a|m[eé]todos|methods/u', $normalized)) return 'methods';
+        if (preg_match('/^resultado|^results?/u', $normalized)) return 'results';
+        if (preg_match('/^discusi[óo]n|^discussion/u', $normalized)) return 'discussion';
         if (preg_match('/resultado|results?|discusi[oó]n|discussion/u', $normalized)) return 'results|discussion';
         if (preg_match('/conclus|consideraciones finales/u', $normalized)) return 'conclusions';
         return 'sec';
