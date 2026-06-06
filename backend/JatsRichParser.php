@@ -21,6 +21,7 @@ class JatsRichParser
             'issn_epub' => '',
             'publisher' => '',
             'doi' => '',
+            'articleIdOther' => '',
             'articleTitle' => '',
             'articleTitleEn' => '',
             'authors' => [],
@@ -71,6 +72,8 @@ class JatsRichParser
         // Article ids and titles
         $node = $xpath->query('//*[local-name()="article-meta"]/*[local-name()="article-id" and @pub-id-type="doi"]')->item(0);
         if ($node) $meta['doi'] = trim($node->textContent);
+        $node = $xpath->query('//*[local-name()="article-meta"]/*[local-name()="article-id" and @pub-id-type="other"]')->item(0);
+        if ($node) $meta['articleIdOther'] = trim($node->textContent);
         $node = $xpath->query('//*[local-name()="article-meta"]/*[local-name()="title-group"]/*[local-name()="article-title"]')->item(0);
         if ($node) $meta['articleTitle'] = trim($node->textContent);
         $node = $xpath->query('//*[local-name()="article-meta"]/*[local-name()="title-group"]/*[local-name()="trans-title-group"]/*[local-name()="trans-title"]')->item(0);
@@ -181,11 +184,17 @@ class JatsRichParser
             $meta['authors'][] = ['name' => $name, 'orcid' => $orcid, 'aff' => $affNumeric];
         }
 
-        // Abstracts
+        // Abstracts — leer solo el <p>, excluyendo el <title> (RESUMEN/ABSTRACT)
         $abs = $xpath->query('//*[local-name()="article-meta"]//*[local-name()="abstract"]')->item(0);
-        if ($abs) $meta['abstractEs'] = trim($abs->textContent);
+        if ($abs) {
+            $pAbs = $xpath->query('.//*[local-name()="p"]', $abs)->item(0);
+            $meta['abstractEs'] = $pAbs ? trim($pAbs->textContent) : trim($abs->textContent);
+        }
         $absEn = $xpath->query('//*[local-name()="article-meta"]//*[local-name()="trans-abstract"]')->item(0);
-        if ($absEn) $meta['abstractEn'] = trim($absEn->textContent);
+        if ($absEn) {
+            $pAbsEn = $xpath->query('.//*[local-name()="p"]', $absEn)->item(0);
+            $meta['abstractEn'] = $pAbsEn ? trim($pAbsEn->textContent) : trim($absEn->textContent);
+        }
 
         // Keywords by language
         $kwdGroups = $xpath->query('//*[local-name()="article-meta"]//*[local-name()="kwd-group"]');
@@ -434,32 +443,84 @@ class JatsRichParser
             }
         }
 
+        // Helper para crear un nodo de fecha completo (day/month/year)
+        $makeDateNode = function(string $tagName, string $dateValue, array $attrs = []) use ($dom) {
+            $parts = preg_split('/\s+/', trim($dateValue));
+            if (count($parts) < 3) return null;
+            $node = $dom->createElement($tagName);
+            foreach ($attrs as $k => $v) $node->setAttribute($k, $v);
+            $day = $dom->createElement('day', str_pad($parts[0], 2, '0', STR_PAD_LEFT));
+            $month = $dom->createElement('month', str_pad($parts[1], 2, '0', STR_PAD_LEFT));
+            $year = $dom->createElement('year', $parts[2]);
+            $node->appendChild($day);
+            $node->appendChild($month);
+            $node->appendChild($year);
+            return $node;
+        };
+
+        // Helper: inserta $newNode antes del primer nodo hijo de $parent cuyo localName
+        // coincida con $beforeTags (array), o al final si no hay referencia.
+        $insertBefore = function($parent, $newNode, array $beforeTags) use ($dom) {
+            foreach ($parent->childNodes as $child) {
+                if ($child instanceof DOMElement && in_array($child->localName, $beforeTags, true)) {
+                    $parent->insertBefore($newNode, $child);
+                    return;
+                }
+            }
+            $parent->appendChild($newNode);
+        };
+
+        $am = $xpath->query('//*[local-name()="article-meta"]')->item(0);
+
+        // --- article-id pub-id-type="other" ---
+        if (!empty($meta['articleIdOther'])) {
+            $n = $xpath->query('//*[local-name()="article-meta"]/*[local-name()="article-id" and @pub-id-type="other"]')->item(0);
+            if ($n) {
+                $setText($n, $meta['articleIdOther']);
+            } elseif ($am) {
+                $nid = $dom->createElement('article-id', $meta['articleIdOther']);
+                $nid->setAttribute('pub-id-type', 'other');
+                // Insertar justo después del article-id doi
+                $doiNode = $xpath->query('//*[local-name()="article-meta"]/*[local-name()="article-id" and @pub-id-type="doi"]')->item(0);
+                if ($doiNode && $doiNode->nextSibling) {
+                    $am->insertBefore($nid, $doiNode->nextSibling);
+                } else {
+                    $insertBefore($am, $nid, ['article-categories', 'title-group', 'contrib-group', 'aff', 'author-notes', 'pub-date', 'volume', 'elocation-id', 'history', 'permissions', 'abstract', 'trans-abstract', 'kwd-group', 'counts']);
+                }
+            }
+        }
+
+        // --- volume ---
         if (!empty($meta['volume'])) {
             $node = $xpath->query('//*[local-name()="article-meta"]/*[local-name()="volume"]')->item(0);
-            if ($node) $setText($node, $meta['volume']);
+            if ($node) {
+                $setText($node, $meta['volume']);
+            } elseif ($am) {
+                $newNode = $dom->createElement('volume', $meta['volume']);
+                $insertBefore($am, $newNode, ['elocation-id', 'issue', 'history', 'permissions', 'abstract', 'trans-abstract', 'kwd-group', 'counts']);
+            }
         }
 
+        // --- elocation-id ---
         if (!empty($meta['elocation-id'])) {
             $node = $xpath->query('//*[local-name()="article-meta"]/*[local-name()="elocation-id"]')->item(0);
-            if ($node) $setText($node, $meta['elocation-id']);
+            if ($node) {
+                $setText($node, $meta['elocation-id']);
+            } elseif ($am) {
+                $newNode = $dom->createElement('elocation-id', $meta['elocation-id']);
+                $insertBefore($am, $newNode, ['history', 'permissions', 'abstract', 'trans-abstract', 'kwd-group', 'counts']);
+            }
         }
 
-        if (!empty($meta['received'])) {
-            $dateNode = $xpath->query('//*[local-name()="article-meta"]//*[local-name()="history"]/*[local-name()="date" and @date-type="received"]')->item(0);
-            $updateDateNode($dateNode, $meta['received']);
-        }
-        if (!empty($meta['revised'])) {
-            $dateNode = $xpath->query('//*[local-name()="article-meta"]//*[local-name()="history"]/*[local-name()="date" and (@date-type="revised" or @date-type="rev-recd")]')->item(0);
-            $updateDateNode($dateNode, $meta['revised']);
-        }
-        if (!empty($meta['accepted'])) {
-            $dateNode = $xpath->query('//*[local-name()="article-meta"]//*[local-name()="history"]/*[local-name()="date" and @date-type="accepted"]')->item(0);
-            $updateDateNode($dateNode, $meta['accepted']);
-        }
-
+        // --- pub-date pub / collection ---
         if (!empty($meta['pubdate'])) {
             $dateNode = $xpath->query('//*[local-name()="article-meta"]/*[local-name()="pub-date" and @date-type="pub"]')->item(0);
-            $updateDateNode($dateNode, $meta['pubdate']);
+            if ($dateNode) {
+                $updateDateNode($dateNode, $meta['pubdate']);
+            } elseif ($am) {
+                $newPd = $makeDateNode('pub-date', $meta['pubdate'], ['date-type' => 'pub', 'publication-format' => 'electronic']);
+                if ($newPd) $insertBefore($am, $newPd, ['pub-date', 'volume', 'elocation-id', 'history', 'permissions', 'abstract', 'trans-abstract', 'kwd-group', 'counts']);
+            }
         }
 
         if (!empty($meta['collectionYear'])) {
@@ -467,23 +528,113 @@ class JatsRichParser
             if ($collNode) {
                 $year = $xpath->query('.//*[local-name()="year"]', $collNode)->item(0);
                 if ($year) $setText($year, $meta['collectionYear']);
-            }
-        }
-
-        if (isset($meta['abstractEs'])) {
-            $abs = $xpath->query('//*[local-name()="article-meta"]//*[local-name()="abstract"]')->item(0);
-            // Solo reescribir el resumen si realmente cambió respecto al original
-            // (se compara contra el textContent completo del <abstract>, que es lo que extrae el parser).
-            if ($abs && trim($abs->textContent) !== trim($meta['abstractEs'])) {
-                $pNode = $xpath->query('.//*[local-name()="p"]', $abs)->item(0);
-                if ($pNode) {
-                    $setText($pNode, $meta['abstractEs']);
+            } elseif ($am) {
+                $newColl = $dom->createElement('pub-date');
+                $newColl->setAttribute('date-type', 'collection');
+                $newColl->setAttribute('publication-format', 'electronic');
+                $newColl->appendChild($dom->createElement('year', $meta['collectionYear']));
+                // Insertar después de pub-date pub
+                $pubDateNode = $xpath->query('//*[local-name()="article-meta"]/*[local-name()="pub-date" and @date-type="pub"]')->item(0);
+                if ($pubDateNode && $pubDateNode->nextSibling) {
+                    $am->insertBefore($newColl, $pubDateNode->nextSibling);
                 } else {
-                    $setText($abs, $meta['abstractEs']);
+                    $insertBefore($am, $newColl, ['volume', 'elocation-id', 'history', 'permissions', 'abstract', 'trans-abstract', 'kwd-group', 'counts']);
                 }
             }
         }
 
+        // --- history (received / revised / accepted / pub-in-history) ---
+        $histNode = $xpath->query('//*[local-name()="article-meta"]/*[local-name()="history"]')->item(0);
+
+        // Crear nodo <history> si falta y hay al menos una fecha
+        if (!$histNode && $am && (!empty($meta['received']) || !empty($meta['revised']) || !empty($meta['accepted']))) {
+            $histNode = $dom->createElement('history');
+            $insertBefore($am, $histNode, ['permissions', 'abstract', 'trans-abstract', 'kwd-group', 'counts']);
+        }
+
+        if ($histNode) {
+            // received
+            if (!empty($meta['received'])) {
+                $dn = $xpath->query('.//*[local-name()="date" and @date-type="received"]', $histNode)->item(0);
+                if ($dn) { $updateDateNode($dn, $meta['received']); }
+                else {
+                    $nd = $makeDateNode('date', $meta['received'], ['date-type' => 'received']);
+                    if ($nd) $histNode->appendChild($nd);
+                }
+            }
+            // revised / rev-recd
+            if (!empty($meta['revised'])) {
+                $dn = $xpath->query('.//*[local-name()="date" and (@date-type="revised" or @date-type="rev-recd")]', $histNode)->item(0);
+                if ($dn) { $updateDateNode($dn, $meta['revised']); }
+                else {
+                    $nd = $makeDateNode('date', $meta['revised'], ['date-type' => 'rev-recd']);
+                    if ($nd) $histNode->appendChild($nd);
+                }
+            }
+            // accepted
+            if (!empty($meta['accepted'])) {
+                $dn = $xpath->query('.//*[local-name()="date" and @date-type="accepted"]', $histNode)->item(0);
+                if ($dn) { $updateDateNode($dn, $meta['accepted']); }
+                else {
+                    $nd = $makeDateNode('date', $meta['accepted'], ['date-type' => 'accepted']);
+                    if ($nd) $histNode->appendChild($nd);
+                }
+            }
+            // pub dentro de history (para documentos sin cabecera, estilo 6032)
+            if (!empty($meta['pubdate'])) {
+                $dn = $xpath->query('.//*[local-name()="date" and @date-type="pub"]', $histNode)->item(0);
+                if ($dn) { $updateDateNode($dn, $meta['pubdate']); }
+                else {
+                    $nd = $makeDateNode('date', $meta['pubdate'], ['date-type' => 'pub']);
+                    if ($nd) $histNode->appendChild($nd);
+                }
+            }
+        }
+
+        // --- abstract (español) ---
+        $absText = trim((string)($meta['abstractEs'] ?? ''));
+        if ($absText !== '') {
+            $abs = $xpath->query('//*[local-name()="article-meta"]//*[local-name()="abstract" and not(@xml:lang) and not(@*[local-name()="lang"])]')->item(0);
+            if (!$abs) $abs = $xpath->query('//*[local-name()="article-meta"]//*[local-name()="abstract"]')->item(0);
+            if ($abs) {
+                // Comparar solo el <p>, no el <title> (que contiene "RESUMEN ")
+                $pNode = $xpath->query('.//*[local-name()="p"]', $abs)->item(0);
+                $currentText = $pNode ? trim($pNode->textContent) : trim($abs->textContent);
+                if ($currentText !== $absText) {
+                    if ($pNode) $setText($pNode, $absText); else $setText($abs, $absText);
+                }
+            } elseif ($am) {
+                $newAbs = $dom->createElement('abstract');
+                $titleEl = $dom->createElement('title', 'RESUMEN ');
+                $pEl = $dom->createElement('p', $absText);
+                $newAbs->appendChild($titleEl);
+                $newAbs->appendChild($pEl);
+                $insertBefore($am, $newAbs, ['trans-abstract', 'kwd-group', 'counts']);
+            }
+        }
+
+        // --- trans-abstract (inglés) ---
+        $absEnText = trim((string)($meta['abstractEn'] ?? ''));
+        if ($absEnText !== '') {
+            $absEn = $xpath->query('//*[local-name()="article-meta"]//*[local-name()="trans-abstract"]')->item(0);
+            if ($absEn) {
+                $pNode = $xpath->query('.//*[local-name()="p"]', $absEn)->item(0);
+                $currentText = $pNode ? trim($pNode->textContent) : trim($absEn->textContent);
+                if ($currentText !== $absEnText) {
+                    if ($pNode) $setText($pNode, $absEnText); else $setText($absEn, $absEnText);
+                }
+            } elseif ($am) {
+                $newAbsEn = $dom->createElement('trans-abstract');
+                $newAbsEn->setAttributeNS('http://www.w3.org/XML/1998/namespace', 'xml:lang', 'en');
+                $titleEl = $dom->createElement('title', 'ABSTRACT ');
+                $pEl = $dom->createElement('p', $absEnText);
+                $newAbsEn->appendChild($titleEl);
+                $newAbsEn->appendChild($pEl);
+                $insertBefore($am, $newAbsEn, ['kwd-group', 'counts']);
+            }
+        }
+
+        // --- kwd-group español ---
         if (!empty($meta['kwdsEs']) && is_array($meta['kwdsEs'])) {
             $kg = $xpath->query('//*[local-name()="article-meta"]//*[local-name()="kwd-group" and (@xml:lang="es" or not(@xml:lang))]')->item(0);
             if ($kg) {
@@ -491,7 +642,6 @@ class JatsRichParser
                 $existingVals = [];
                 foreach ($existing as $e) $existingVals[] = trim($e->textContent);
                 $newVals = array_map('strval', array_values($meta['kwdsEs']));
-                // Solo reconstruir si las palabras clave cambiaron
                 if ($existingVals !== $newVals) {
                     foreach ($existing as $e) $e->parentNode->removeChild($e);
                     foreach ($meta['kwdsEs'] as $kw) {
@@ -499,9 +649,20 @@ class JatsRichParser
                         $kg->appendChild($el);
                     }
                 }
+            } elseif ($am) {
+                $newKg = $dom->createElement('kwd-group');
+                $newKg->setAttributeNS('http://www.w3.org/XML/1998/namespace', 'xml:lang', 'es');
+                $titleEl = $dom->createElement('title', 'PALABRAS CLAVES:');
+                $newKg->appendChild($titleEl);
+                foreach ($meta['kwdsEs'] as $kw) {
+                    $el = $dom->createElement('kwd', $kw);
+                    $newKg->appendChild($el);
+                }
+                $insertBefore($am, $newKg, ['counts']);
             }
         }
 
+        // --- kwd-group inglés ---
         if (!empty($meta['kwdsEn']) && is_array($meta['kwdsEn'])) {
             $kg = $xpath->query('//*[local-name()="article-meta"]//*[local-name()="kwd-group" and @xml:lang="en"]')->item(0);
             if ($kg) {
@@ -509,7 +670,6 @@ class JatsRichParser
                 $existingVals = [];
                 foreach ($existing as $e) $existingVals[] = trim($e->textContent);
                 $newVals = array_map('strval', array_values($meta['kwdsEn']));
-                // Solo reconstruir si las palabras clave cambiaron
                 if ($existingVals !== $newVals) {
                     foreach ($existing as $e) $e->parentNode->removeChild($e);
                     foreach ($meta['kwdsEn'] as $kw) {
@@ -517,6 +677,16 @@ class JatsRichParser
                         $kg->appendChild($el);
                     }
                 }
+            } elseif ($am) {
+                $newKg = $dom->createElement('kwd-group');
+                $newKg->setAttributeNS('http://www.w3.org/XML/1998/namespace', 'xml:lang', 'en');
+                $titleEl = $dom->createElement('title', 'Keywords:');
+                $newKg->appendChild($titleEl);
+                foreach ($meta['kwdsEn'] as $kw) {
+                    $el = $dom->createElement('kwd', $kw);
+                    $newKg->appendChild($el);
+                }
+                $insertBefore($am, $newKg, ['counts']);
             }
         }
 

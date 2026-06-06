@@ -245,6 +245,7 @@ $meta = [
     'kwdsEn' => [],
     'funding' => [],
     'fundingStatement' => '',
+    'ack' => '',
     'conflict' => '',
     'contributions' => [],
     'references' => [],
@@ -256,7 +257,8 @@ $meta = [
     'received' => '',
     'revised' => '',
     'accepted' => '',
-    'pubdate' => ''
+    'pubdate' => '',
+    'articleIdOther' => ''
 ];
 
         // Mapa de nombres de meses en español/portugués a número de mes.
@@ -491,12 +493,12 @@ $meta = [
                     continue;
                 }
                 // Si encuentra el inicio del resumen en español, omite esa línea y sigue con la siguiente.
-                if (preg_match('/^Resumen\s*:/i', $lineTrim) || preg_match('/^Abstract\s*:/i', $lineTrim)) {
+                if (preg_match('/^(?:RESUMEN|Resumen)\s*:?/i', $lineTrim) || preg_match('/^(?:ABSTRACT|Abstract)\s*:?/i', $lineTrim)) {
                     // Omite este caso y sigue con la siguiente línea del DOCX.
                     continue;
                 }
                 // Si encuentra las palabras clave en español, omite esa línea y sigue con la siguiente.
-                if (preg_match('/^Palabras\s+claves?/i', $lineTrim) || preg_match('/^Keywords\s*:/i', $lineTrim)) {
+                if (preg_match('/^(?:PALABRAS\s+CLAVES?|Palabras\s+claves?)\s*:?/i', $lineTrim) || preg_match('/^Keywords\s*:?/i', $lineTrim)) {
                     // Omite este caso y sigue con la siguiente línea del DOCX.
                     continue;
                 }
@@ -587,7 +589,7 @@ $meta = [
             }
 
             // Si encuentra el inicio de las referencias, desactiva la bandera $authorArea.
-            if (preg_match('/^(Resumen|Abstract|Palabras\s+claves?|Keywords|Financiamiento|Referencias bibliogr(?:a?ficas)?|Referencias|References?|Introducción|Introduction)\b/i', $lineTrim)) {
+            if (preg_match('/^(?:RESUMEN|ABSTRACT|Resumen|Abstract|(?:PALABRAS\s+CLAVES?|Palabras\s+claves?)|Keywords|Financiamiento|Referencias bibliogr(?:a?ficas)?|Referencias|References?|Introducción|Introduction)\b/i', $lineTrim)) {
                 // Inicializa $authorArea apagado hasta detectar el caso correspondiente.
                 $authorArea = false;
                 // Prepara $authorAreaClosed con el valor que se usará después.
@@ -1085,39 +1087,39 @@ $meta = [
             // Limpia espacios sobrantes y deja el texto listo en $rawLineTrim.
             $rawLineTrim = trim($rawClean[$idx] ?? $lineTrim);
             // Si encuentra el inicio del resumen en español, cambia el estado de lectura a "abstract_es".
-            if (preg_match('/^Resumen\s*:/i', $lineTrim)) {
+            if (preg_match('/^(?:RESUMEN|Resumen)\s*:?\s*/i', $lineTrim)) {
                 // Prepara $state con el valor que se usará después.
                 $state = 'abstract_es';
                 // Guarda en "abstractEs" el dato que se acaba de detectar o normalizar.
-                $meta['abstractEs'] = trim(preg_replace('/^Resumen\s*:/i', '', $rawLineTrim));
+                $meta['abstractEs'] = trim(preg_replace('/^(?:RESUMEN|Resumen)\s*:?\s*/i', '', $rawLineTrim));
                 // Omite este caso y sigue con la siguiente línea del DOCX.
                 continue;
             }
             // Si encuentra el inicio del resumen en inglés, cambia el estado de lectura a "abstract_en".
-            if (preg_match('/^Abstract\s*:/i', $lineTrim)) {
+            if (preg_match('/^(?:ABSTRACT|Abstract)\s*:?\s*/i', $lineTrim)) {
                 // Prepara $state con el valor que se usará después.
                 $state = 'abstract_en';
                 // Guarda en "abstractEn" el dato que se acaba de detectar o normalizar.
-                $meta['abstractEn'] = trim(preg_replace('/^Abstract\s*:/i', '', $rawLineTrim));
+                $meta['abstractEn'] = trim(preg_replace('/^(?:ABSTRACT|Abstract)\s*:?\s*/i', '', $rawLineTrim));
                 // Omite este caso y sigue con la siguiente línea del DOCX.
                 continue;
             }
             // Si encuentra las palabras clave en español, cambia el estado de lectura a "kwds_es".
-            if (preg_match('/^Palabras\s+claves?\s*:/i', $lineTrim)) {
+            if (preg_match('/^(?:PALABRAS\s+CLAVES?|Palabras\s+claves?)\s*:?\s*/i', $lineTrim)) {
                 // Prepara $state con el valor que se usará después.
                 $state = 'kwds_es';
                 // Limpia espacios sobrantes y deja el texto listo en $kw.
-                $kw = trim(preg_replace('/^Palabras\s+claves?\s*:/i', '', $lineTrim));
+                $kw = trim(preg_replace('/^(?:PALABRAS\s+CLAVES?|Palabras\s+claves?)\s*:?\s*/i', '', $lineTrim));
                 if ($kw !== '') $meta['kwdsEs'] = array_filter(array_map('trim', preg_split('/[;,]/', $kw)));
                 // Omite este caso y sigue con la siguiente línea del DOCX.
                 continue;
             }
             // Si encuentra las palabras clave en inglés, cambia el estado de lectura a "kwds_en".
-            if (preg_match('/^Keywords\s*:/i', $lineTrim)) {
+            if (preg_match('/^Keywords\s*:?\s*/i', $lineTrim)) {
                 // Prepara $state con el valor que se usará después.
                 $state = 'kwds_en';
                 // Limpia espacios sobrantes y deja el texto listo en $kw.
-                $kw = trim(preg_replace('/^Keywords\s*:/i', '', $lineTrim));
+                $kw = trim(preg_replace('/^Keywords\s*:?\s*/i', '', $lineTrim));
                 if ($kw !== '') $meta['kwdsEn'] = array_filter(array_map('trim', preg_split('/[;,]/', $kw)));
                 // Omite este caso y sigue con la siguiente línea del DOCX.
                 continue;
@@ -1127,6 +1129,11 @@ $meta = [
                 // Prepara $state con el valor que se usará después.
                 $state = 'funding';
                 // Omite este caso y sigue con la siguiente línea del DOCX.
+                continue;
+            }
+            // Si encuentra la sección de agradecimientos, cambia el estado de lectura a "ack".
+            if (preg_match('/^Agradecimiento(?:s)?$/i', $lineTrim)) {
+                $state = 'ack';
                 continue;
             }
             // Si encuentra la sección de conflicto de intereses, guarda el resultado en el metadato "conflict".
@@ -1211,23 +1218,28 @@ $meta = [
             // Si se está acumulando el resumen en español, ejecuta el procesamiento específico de ese caso.
             if ($state === 'abstract_es') {
                 // Si no encuentra las palabras clave en español, guarda el resultado en el metadato "abstractEs".
-                if (!preg_match('/^Palabras\s+claves?\s*:/i', $lineTrim)) {
+                if (!preg_match('/^(?:PALABRAS\s+CLAVES?|Palabras\s+claves?)\s*:?/i', $lineTrim)) {
                     // Guarda en "abstractEs" el dato que se acaba de detectar o normalizar.
                     $meta['abstractEs'] = trim($meta['abstractEs'] . ' ' . $rawLineTrim);
                 }
             // Si no entró en el caso anterior y el parser está acumulando texto de esa sección, ejecuta las instrucciones internas de ese caso.
             } elseif ($state === 'abstract_en') {
                 // Si no encuentra las palabras clave en inglés, guarda el resultado en el metadato "abstractEn".
-                if (!preg_match('/^Keywords\s*:/i', $lineTrim)) {
+                if (!preg_match('/^Keywords\s*:?/i', $lineTrim)) {
                     // Guarda en "abstractEn" el dato que se acaba de detectar o normalizar.
                     $meta['abstractEn'] = trim($meta['abstractEn'] . ' ' . $rawLineTrim);
                 }
             // Si no entró en el caso anterior y el parser está acumulando texto de esa sección, ejecuta las instrucciones internas de ese caso.
             } elseif ($state === 'funding') {
                 // Si no encuentra la sección de conflicto de intereses, guarda el resultado en el metadato "fundingStatement".
-                if (!preg_match('/^Conflicto de Intereses$/i', $lineTrim)) {
+                if (!preg_match('/^(?:Conflicto de Intereses|Agradecimiento)/i', $lineTrim)) {
                     // Guarda en "fundingStatement" el dato que se acaba de detectar o normalizar.
                     $meta['fundingStatement'] = trim($meta['fundingStatement'] . ' ' . $lineTrim);
+                }
+            // Acumulación de agradecimientos
+            } elseif ($state === 'ack') {
+                if (!preg_match('/^(?:Financiamiento|Conflicto de Intereses|Contribuci[óo]n)/i', $lineTrim)) {
+                    $meta['ack'] = trim(($meta['ack'] ?? '') . ' ' . $lineTrim);
                 }
             // Si no entró en el caso anterior y el parser está acumulando texto de esa sección, ejecuta las instrucciones internas de ese caso.
             } elseif ($state === 'conflict') {
@@ -1276,7 +1288,8 @@ $meta = [
             }
         }
 
-        // Si se cumple esta condición, prepara $sources con el valor que se usará dentro del bloque.
+        // Inicializar ack si no existe
+        if (!isset($meta['ack'])) $meta['ack'] = '';
         if ($meta['fundingStatement'] !== '') {
             // Inicializa el arreglo $sources.
             $sources = [];
@@ -1791,6 +1804,9 @@ $meta = [
         // Prepara $articleMeta con el valor que se usará después.
         $articleMeta = $t2 . "<article-meta>\n";
         if ($doi) $articleMeta .= $t3 . "<article-id pub-id-type=\"doi\">" . $e($doi) . "</article-id>\n";
+        if (!empty($meta['articleIdOther'])) {
+            $articleMeta .= $t3 . "<article-id pub-id-type=\"other\">" . $e($meta['articleIdOther']) . "</article-id>\n";
+        }
         // Agrega contenido al texto acumulado en $articleMeta.
         $articleMeta .= $t3 . "<article-categories>\n";
         // Agrega contenido al texto acumulado en $articleMeta.
@@ -2271,40 +2287,65 @@ $meta = [
             // Agrupar secciones: intro, methods, luego results|discussion (con sub-secs), luego conclusions
             $grouped = [
                 'intro'            => [],
+                'intro_children'   => [],  // sub-secciones dentro de intro
                 'methods'          => [],
-                'results_children' => [],  // sub-secciones dentro de results|discussion
+                'results_children' => [],  // sub-secciones dentro de results
+                'discussion'       => [],  // Discusión como sección propia
                 'conclusions'      => [],
                 'other'            => [],
             ];
 
+            $inIntro = false;
             $inResultsDiscussion = false;
             foreach ($sections as $sec) {
                 $normalized = mb_strtolower(trim($sec['title']));
                 if (preg_match('/introducci[oó]n|introduction/u', $normalized)) {
                     $grouped['intro'][] = $sec;
+                    $inIntro = true;
                     $inResultsDiscussion = false;
                 } elseif (preg_match('/metodolog[ií]a|m[eé]todos|methods/u', $normalized)) {
                     $grouped['methods'][] = $sec;
+                    $inIntro = false;
                     $inResultsDiscussion = false;
                 } elseif (in_array($normalized, $conclusionTitles, true) || preg_match('/conclus|consideraciones\s+finales/u', $normalized)) {
                     $grouped['conclusions'][] = $sec;
+                    $inIntro = false;
+                    $inResultsDiscussion = false;
+                } elseif (preg_match('/\bdiscusi[oó]n\b|discussion/u', $normalized) && !preg_match('/resultado/u', $normalized)) {
+                    // Discusión sola → sección propia, no subsección de Resultados
+                    $grouped['discussion'][] = $sec;
+                    $inIntro = false;
                     $inResultsDiscussion = false;
                 } elseif ($this->isResultsDiscussionHeading($normalized)) {
                     $grouped['results_children'][] = $sec;
+                    $inIntro = false;
                     $inResultsDiscussion = true;
                 } elseif ($inResultsDiscussion) {
                     $grouped['results_children'][] = $sec;
+                } elseif ($inIntro) {
+                    // Subsección de intro: título que viene después de Introducción
+                    // y no es ninguna sección conocida
+                    $grouped['intro_children'][] = $sec;
                 } else {
                     $grouped['other'][] = $sec;
                 }
             }
 
-            // Intro
+            // Intro (con subsecciones hijas si las hay)
             foreach ($grouped['intro'] as $sec) {
                 $xml .= "\t\t<sec sec-type=\"intro\">\r\n";
                 $xml .= "\t\t\t<title>" . htmlspecialchars($sec['title']) . "</title>\r\n";
                 foreach ($sec['paragraphs'] as $para) {
                     $xml .= $this->formatParagraphGranular($para, "\t\t\t");
+                }
+                // Sub-secciones de intro
+                foreach ($grouped['intro_children'] as $child) {
+                    $xml .= "\t\t\t<sec>\r\n";
+                    $xml .= "\t\t\t\t<title>" . htmlspecialchars($child['title']) . "</title>\r\n";
+                    foreach ($child['paragraphs'] as $para) {
+                        $xml .= $this->formatParagraphGranular($para, "\t\t\t\t");
+                    }
+                    $xml .= "\t\t\t</sec>\r\n";
                 }
                 $xml .= "\t\t</sec>\r\n";
             }
@@ -2347,6 +2388,16 @@ $meta = [
                         $xml .= $this->formatParagraphGranular($para, "\t\t\t\t");
                     }
                     $xml .= "\t\t\t</sec>\r\n";
+                }
+                $xml .= "\t\t</sec>\r\n";
+            }
+
+            // Discusión como sección propia (cuando no está agrupada con Resultados)
+            foreach ($grouped['discussion'] as $sec) {
+                $xml .= "\t\t<sec sec-type=\"discussion\">\r\n";
+                $xml .= "\t\t\t<title>" . htmlspecialchars($sec['title']) . "</title>\r\n";
+                foreach ($sec['paragraphs'] as $para) {
+                    $xml .= $this->formatParagraphGranular($para, "\t\t\t");
                 }
                 $xml .= "\t\t</sec>\r\n";
             }
@@ -2568,6 +2619,15 @@ $meta = [
     private function buildBackXml(array $meta)
     {
         $xml = "\t<back>\r\n";
+
+        // Agradecimientos
+        if (!empty($meta['ack'])) {
+            $xml .= "\t\t<ack>\r\n";
+            $xml .= "\t\t\t<title>Agradecimientos</title>\r\n";
+            $xml .= "\t\t\t<p>" . htmlspecialchars(trim($meta['ack'])) . "</p>\r\n";
+            $xml .= "\t\t</ack>\r\n";
+        }
+
         $xml .= "\t\t<ref-list>\r\n";
         $xml .= "\t\t\t<title>Referencias bibliográficas</title>\r\n";
 
