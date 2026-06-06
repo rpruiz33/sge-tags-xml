@@ -2248,9 +2248,10 @@ $meta = [
         // Normaliza el texto con una expresión regular y lo guarda en $xml.
         $xml = preg_replace('/<\/article-meta>\r?\n(?:\t*\r?\n)+\t<\/front>\r?\n/', "</article-meta>\r\n\t</front>\r\n", $xml);
 
-        // Normaliza todos los saltos de línea a LF para igualar los patrones de referencia.
+        // Normaliza todos los saltos de línea a CRLF para igualar los patrones de referencia.
         $xml = str_replace("\r\n", "\n", $xml);
         $xml = str_replace("\r", "\n", $xml);
+        $xml = str_replace("\n", "\r\n", $xml);
 
         // Devuelve el resultado final de esta parte del proceso.
         return $xml;
