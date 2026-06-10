@@ -109,69 +109,68 @@ class DocxParser
     {
         $NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 
-        // Helper: get a w: attribute value from a DOMElement
         $wa = function ($node, $attr) use ($NS) {
             return $node ? $node->getAttributeNS($NS, $attr) : null;
         };
 
-        $xml = "<table-wrap>\r\n\t\t<table>\r\n\t\t\t<tbody>\r\n";
-        foreach ($xpath->query('./w:tr', $tbl) as $tr) {
-            $xml .= "\t\t\t\t<tr>\r\n";
+        // Contar columnas para el colgroup
+        $colCount = 0;
+        $firstRow = $xpath->query('./w:tr', $tbl)->item(0);
+        if ($firstRow) {
+            foreach ($xpath->query('./w:tc', $firstRow) as $tc) {
+                $tcPr = $xpath->query('./w:tcPr', $tc)->item(0);
+                $gs = $tcPr ? $xpath->query('./w:gridSpan', $tcPr)->item(0) : null;
+                $colCount += ($gs && $wa($gs, 'val')) ? (int)$wa($gs, 'val') : 1;
+            }
+        }
 
-            foreach ($xpath->query('./w:tc', $tr) as $tc) {
-                $tcPr   = $xpath->query('./w:tcPr', $tc)->item(0);
-                $styles = [];
-                $attrs  = '';
+        $xml = "<table-wrap>\r\n\t\t<table>\r\n";
+        if ($colCount > 0) {
+            $xml .= "\t\t\t<colgroup>\r\n\t\t\t\t<col span=\"$colCount\"/>\r\n\t\t\t</colgroup>\r\n";
+        }
+        $xml .= "\t\t\t<thead>\r\n";
 
-                // ── background-color (w:shd @w:fill) ──────────────────────────────
-                $shd  = $tcPr ? $xpath->query('./w:shd', $tcPr)->item(0) : null;
-                $fill = $shd  ? $wa($shd, 'fill') : null;
-                if ($fill && $fill !== 'auto' && $fill !== 'none' && strlen($fill) === 6) {
-                    $styles[] = "background-color:#$fill";
-                }
+        $rows = $xpath->query('./w:tr', $tbl);
+        $rowCount = $rows->length;
 
-                // ── vertical-align (w:vAlign @w:val) ──────────────────────────────
-                $vAl = $tcPr ? $xpath->query('./w:vAlign', $tcPr)->item(0) : null;
-                $va  = $vAl  ? $wa($vAl, 'val') : null;
-                if ($va && $va !== 'top') {
-                    $styles[] = "vertical-align:$va";
-                }
+        for ($i = 0; $i < $rowCount; $i++) {
+            $tr = $rows->item($i);
+            $isHeader = ($i < 3); // Los primeros 3 rows suelen ser el header en el patrón
+            
+            if ($isHeader) {
+                $xml .= "\t\t\t\t<tr>\r\n";
+                foreach ($xpath->query('./w:tc', $tr) as $tc) {
+                    $tcPr = $xpath->query('./w:tcPr', $tc)->item(0);
+                    $styles = [];
+                    $attrs = '';
 
-                // ── font-size (first w:sz in any run inside the cell) ─────────────
-                $szNode = $xpath->query('.//w:rPr/w:sz', $tc)->item(0);
-                if ($szNode) {
-                    $halfPt = (int) $wa($szNode, 'val');
-                    if ($halfPt > 0) {
-                        $pt = $halfPt / 2;
-                        $styles[] = "font-size:{$pt}pt";
+                    // Estilos específicos del patrón para headers
+                    $shd = $tcPr ? $xpath->query('./w:shd', $tcPr)->item(0) : null;
+                    $fill = $shd ? $wa($shd, 'fill') : null;
+                    
+                    // Forzar el color oscuro del patrón si es header
+                    $bgColor = "rgba(51,51,51,0.8)";
+                    $fgColor = "rgb(255,255,255)";
+                    
+                    if ($fill && $fill !== 'auto' && $fill !== 'none' && strlen($fill) === 6) {
+                        $styles[] = "background-color:#$fill";
+                    } else {
+                        $styles[] = "background-color: $bgColor";
                     }
-                }
+                    $styles[] = "color: $fgColor";
+                    $styles[] = "border-right: 1px solid #FFFFFF";
+                    $styles[] = "vertical-align:top";
 
-                // ── font-weight bold (any w:b in the cell runs) ───────────────────
-                $boldNode = $xpath->query('.//w:rPr/w:b', $tc)->item(0);
-                if ($boldNode) {
-                    // w:b with w:val="0" means explicitly NOT bold
-                    $bVal = $wa($boldNode, 'val');
-                    if ($bVal !== '0' && $bVal !== 'false') {
-                        $styles[] = 'font-weight:bold';
-                    }
-                }
+                    $vAl = $tcPr ? $xpath->query('./w:vAlign', $tcPr)->item(0) : null;
+                    $va = $vAl ? $wa($vAl, 'val') : null;
+                    if ($va && $va !== 'top') $styles[] = "vertical-align:$va";
 
-                // ── colspan (w:gridSpan @w:val) ───────────────────────────────────
-                $gs     = $tcPr ? $xpath->query('./w:gridSpan', $tcPr)->item(0) : null;
-                $gsVal  = $gs   ? (int) $wa($gs, 'val') : 0;
-                if ($gsVal > 1) {
-                    $attrs .= " colspan=\"$gsVal\"";
-                }
+                    $gs = $tcPr ? $xpath->query('./w:gridSpan', $tcPr)->item(0) : null;
+                    $gsVal = $gs ? (int)$wa($gs, 'val') : 0;
+                    if ($gsVal > 1) $attrs .= " colspan=\"$gsVal\"";
 
-                // ── rowspan via vMerge ────────────────────────────────────────────
-                // We do a two-pass approach: first collect vMerge info, then emit rowspan.
-                // Simple approach: emit rowspan="N" on the restart cell.
-                $vMerge = $tcPr ? $xpath->query('./w:vMerge', $tcPr)->item(0) : null;
-                if ($vMerge) {
-                    $vmVal = $wa($vMerge, 'val');
-                    if ($vmVal === 'restart') {
-                        // Count how many rows below continue this merge in this column position
+                    $vMerge = $tcPr ? $xpath->query('./w:vMerge', $tcPr)->item(0) : null;
+                    if ($vMerge && $wa($vMerge, 'val') === 'restart') {
                         $colIdx = 0;
                         $prev = $tc->previousSibling;
                         while ($prev) {
@@ -192,18 +191,81 @@ class DocxParser
                             $nextTr = $nextTr->nextSibling;
                         }
                         if ($span > 1) $attrs .= " rowspan=\"$span\"";
-                    } else {
-                        // continuation cell — skip it entirely
+                    } elseif ($vMerge && $wa($vMerge, 'val') !== 'restart') {
                         continue;
                     }
+
+                    $styleAttr = ' style="' . implode(';', $styles) . '"';
+                    $align = "center"; // Default para headers
+                    
+                    $cellParas = [];
+                    foreach ($xpath->query('./w:p', $tc) as $p) {
+                        $cellParas[] = $this->parseParagraphNode($p, $xpath, null);
+                    }
+                    $content = implode('<break/>', array_filter($cellParas, function ($v) { return $v !== ''; }));
+                    
+                    // Si es la primera celda de la fila, suele ser align="left"
+                    if ($colIdx === 0) $align = "left";
+
+                    $xml .= "\t\t\t\t\t<th align=\"$align\"$styleAttr$attrs>" . $content . "</th>\r\n";
+                }
+                $xml .= "\t\t\t\t</tr>\r\n";
+            }
+        }
+        $xml .= "\t\t</thead>\r\n\t\t\t<tbody>\r\n";
+
+        // Body: procesar filas restantes
+        for ($i = 3; $i < $rowCount; $i++) {
+            $tr = $rows->item($i);
+            $xml .= "\t\t\t\t<tr>\r\n";
+            foreach ($xpath->query('./w:tc', $tr) as $tc) {
+                $tcPr = $xpath->query('./w:tcPr', $tc)->item(0);
+                $styles = [];
+                $attrs = '';
+
+                $shd = $tcPr ? $xpath->query('./w:shd', $tcPr)->item(0) : null;
+                $fill = $shd ? $wa($shd, 'fill') : null;
+                if ($fill && $fill !== 'auto' && $fill !== 'none' && strlen($fill) === 6) {
+                    $styles[] = "background-color:#$fill";
                 }
 
-                // ── build style attribute ─────────────────────────────────────────
+                $vAl = $tcPr ? $xpath->query('./w:vAlign', $tcPr)->item(0) : null;
+                $va = $vAl ? $wa($vAl, 'val') : null;
+                if ($va && $va !== 'top') $styles[] = "vertical-align:$va";
+
+                $gs = $tcPr ? $xpath->query('./w:gridSpan', $tcPr)->item(0) : null;
+                $gsVal = $gs ? (int)$wa($gs, 'val') : 0;
+                if ($gsVal > 1) $attrs .= " colspan=\"$gsVal\"";
+
+                $vMerge = $tcPr ? $xpath->query('./w:vMerge', $tcPr)->item(0) : null;
+                if ($vMerge && $wa($vMerge, 'val') === 'restart') {
+                    $colIdx = 0;
+                    $prev = $tc->previousSibling;
+                    while ($prev) {
+                        if ($prev->nodeName === 'w:tc') $colIdx++;
+                        $prev = $prev->previousSibling;
+                    }
+                    $span = 1;
+                    $nextTr = $tr->nextSibling;
+                    while ($nextTr) {
+                        if ($nextTr->nodeName !== 'w:tr') { $nextTr = $nextTr->nextSibling; continue; }
+                        $sibCells = $xpath->query('./w:tc', $nextTr);
+                        $sibTC = $sibCells->item($colIdx);
+                        if (!$sibTC) break;
+                        $sibPr = $xpath->query('./w:tcPr', $sibTC)->item(0);
+                        $sibVM = $sibPr ? $xpath->query('./w:vMerge', $sibPr)->item(0) : null;
+                        if (!$sibVM || $wa($sibVM, 'val') === 'restart') break;
+                        $span++;
+                        $nextTr = $nextTr->nextSibling;
+                    }
+                    if ($span > 1) $attrs .= " rowspan=\"$span\"";
+                } elseif ($vMerge && $wa($vMerge, 'val') !== 'restart') {
+                    continue;
+                }
+
                 $styleAttr = $styles ? ' style="' . implode(';', $styles) . '"' : '';
-
-                $xml .= "\t\t\t\t\t<td{$styleAttr}{$attrs}>";
-
-                // ── cell content ──────────────────────────────────────────────────
+                $xml .= "\t\t\t\t\t<td align=\"left\"$styleAttr$attrs>";
+                
                 $cellParas = [];
                 foreach ($xpath->query('./w:p', $tc) as $p) {
                     $cellParas[] = $this->parseParagraphNode($p, $xpath, null);
@@ -1920,16 +1982,18 @@ $meta = [
             // Agrega contenido al texto acumulado en $articleMeta.
             $articleMeta .= $t5 . "</name>\n";
             // Si hay bio para este autor, lo incluye (solo cuando includeBio está activo).
-            if (!empty($meta['includeBio'])) {
-                $bioText = $meta['affiliations'][$i] ?? '';
-                $affEmailBio = $meta['affiliations_email'][$i] ?? '';
-                if ($bioText !== '') {
-                    if ($affEmailBio !== '' && stripos($bioText, $affEmailBio) === false) {
-                        $bioText = rtrim($bioText, " ;") . '. ' . $affEmailBio . ' ';
-                    }
-                    $articleMeta .= $t5 . "<bio>" . $e($bioText) . "</bio>\n";
-                }
-            }
+             if (!empty($meta['includeBio'])) {
+                 $bioText = $meta['affiliations'][$i] ?? '';
+                 $affEmailBio = $meta['affiliations_email'][$i] ?? '';
+                 if ($bioText !== '') {
+                     if ($affEmailBio !== '' && stripos($bioText, $affEmailBio) === false) {
+                         $bioText = rtrim($bioText, " ;") . '. ' . $affEmailBio . ' ';
+                     }
+                     // Asegurar que el bio termine con espacio si es necesario, igual que el patrón
+                     if (substr($bioText, -1) !== ' ') $bioText .= ' ';
+                     $articleMeta .= $t5 . "<bio>" . $e($bioText) . "</bio>\n";
+                 }
+             }
             // Agrega contenido al texto acumulado en $articleMeta.
             $articleMeta .= $t5 . "<xref ref-type=\"aff\" rid=\"aff" . $n . "\"><sup>" . $n . "</sup></xref>\n";
             // Agrega contenido al texto acumulado en $articleMeta.
@@ -2508,44 +2572,42 @@ $meta = [
         $eloc    = ltrim($meta['elocation-id'] ?? 'e6032', 'e');
         $base    = "$issn-$journal-$vol-e$eloc";
 
-        // Reemplaza <p>Figura N. Título.</p>\n\t\t\t\t<p>Fuente: ...</p>
-        // con <p>\n\t\t\t\t\t<fig id="fN">...</fig>\n\t\t\t\t</p>
+        // Reemplaza bloques de figura/gráfico: <p>Figura/Imagen/Gráfico N. Título.</p> seguido opcionalmente de <p>Fuente: ...</p>
         $xml = preg_replace_callback(
-            '/<p>(Figura (\d+)\. (.+?))<\/p>\r?\n(\t+)<p>(Fuente: .+?)<\/p>/su',
+            '/<p>(Figura|Imagen|Gráfico|Grafico)\s*(\d+)\.\s*(.+?)\s*<\/p>\s*(\t+)?(?:<p>(Fuente:\s*.+?)\s*<\/p>)?/isu',
             function ($m) use ($base) {
-                $indent  = $m[4];          // indentación de contexto
-                $n       = $m[2];          // número de figura
-                $caption = rtrim($m[3]);   // título de la caption
-                // Asegurar espacio final en caption como en el ref
+                $keyword = $m[1];
+                $n       = $m[2];
+                $caption = rtrim($m[3]);
+                $indent  = $m[4] ?? "\t\t\t";
+                $attrib  = $m[5] ?? '';
+
                 if (substr($caption, -1) !== ' ') $caption .= ' ';
-                $attrib  = $m[5];          // línea de fuente
                 $graphic = "$base-gf$n.png";
+
                 return "<p>\r\n$indent\t<fig id=\"f$n\">\r\n"
-                     . "$indent\t\t<label>Figura $n</label>\r\n"
+                     . "$indent\t\t<label>$keyword $n</label>\r\n"
                      . "$indent\t\t<caption>\r\n"
                      . "$indent\t\t\t<title>" . htmlspecialchars($caption, ENT_QUOTES | ENT_XML1, 'UTF-8') . "</title>\r\n"
                      . "$indent\t\t</caption>\r\n"
                      . "$indent\t\t<graphic xlink:href=\"$graphic\"/>\r\n"
-                     . "$indent\t\t<attrib>$attrib</attrib>\r\n"
+                     . ($attrib !== '' ? "$indent\t\t<attrib>$attrib</attrib>\r\n" : "")
                      . "$indent\t</fig>\r\n"
                      . "$indent</p>";
             },
             $xml
         );
 
-        // Actualizar fig-count en article-meta con el número real de figuras encontradas
         preg_match_all('/<fig id="f\d+"/', $xml, $figs);
         $figCount = count($figs[0]);
         if ($figCount > 0) {
             $xml = preg_replace('/<fig-count count="\d+"\/>/', "<fig-count count=\"$figCount\"/>", $xml);
         }
 
-        // Convertir referencias "Figura N" en el texto a <xref ref-type="fig" rid="fN">Figura N</xref>
-        // Solo cuando aparecen como referencia, no como label dentro de <fig>
         $xml = preg_replace_callback(
-            '/(?<!<label>)(?<!<title>)\b(Figura (\d+))\b(?![^<]*<\/(?:label|title)>)(?![^<]*<\/fig>)/u',
+            '/(?<!<label>)(?<!<title>)\b((Figura|Imagen|Gráfico|Grafico)\s*(\d+))\b(?![^<]*<\/(?:label|title)>)(?![^<]*<\/fig>)/iu',
             function ($m) {
-                return '<xref ref-type="fig" rid="f' . $m[2] . '">' . $m[1] . '</xref>';
+                return '<xref ref-type="fig" rid="f' . $m[3] . '">' . $m[1] . '</xref>';
             },
             $xml
         );
