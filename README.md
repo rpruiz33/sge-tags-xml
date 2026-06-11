@@ -18,7 +18,7 @@ sge-tags-xml/
 	├── index.php           # Estado simple del backend
 	├── convert.php         # Endpoint DOCX -> XML JATS
 	├── DocxParser.php      # Parser y generación JATS
-
+	└── JatsRichParser.php
 ```
 
 ## Punto de entrada
