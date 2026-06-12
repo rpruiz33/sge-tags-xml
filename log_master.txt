@@ -1,0 +1,62 @@
+ff6534b 177kb
+5a3f971 208kb se pasa
+efd0e68 167KB
+b16b764 Añade JatsRichParser y merge parcial para preservar JATS (figuras/table-wrap/styles), extrae/estructura thead/tbody y normaliza valores de <td>
+0b92759 sacando seccion de metados detectados pq al tener la edicion estan duplicados
+3757583 cambios en el appjs y convert.php
+22e2264 fix: preservar XML completo al editar metadatos rápidos
+6ab68a0 fix: preservar XML completo al editar metadatos rápidos
+f2e6ea4 corrige parser DOCX para alinear XML con producción
+ac57e23 se modifico el docxparser pq no andaba el body
+33c64c6 fix error en el mapa de meses  de fecha
+393404f se saco espacio en el xml de salida del nombre
+82db00b mal cargado
+3fb1b54 evitar sec vacía en back,  sacar duplicar 'Disponible en': en mixed-citation
+87fbc7c se corrijieron errores de  detección de secciones del body, elimina títulos fijos
+eb6c52d  arreglos en el docxparser , el xml de salida difiere del de produccion
+6df97bc corrigiendo el docxparser.php para y el app.js
+54fb7f8 cambios en la ui en appjs
+203d3bf logrado la mayor granularidad posible
+8792ba7 probando
+b2ef341 tratando de llegar al xml de produccion
+cdcaa6a SE saca la referencia del xml de produccion
+2fd99df comentarios del app.js
+62d6a9a  se intenta llegar al xml de produccion
+4004bcd llegando al xml de produccion
+b426833 cambios en el parseo y react
+77ae33f implementando la lógica necesaria tanto en el backend como en el frontend para extraer y estructurar correctamente todos los campos bibliográficos
+d73d2f7 cambios en el docxparser y app.js
+b06ba52 comentarios en el Docxparser
+a350329 se agrega el body y back al xml de salida
+ab4421c agregado a la interfaz el finaciamiento
+7a9f301  agregando las etiquetas del body y el back para lograr la mayor granularidad
+b92fb0a pequeño cambio en el frontend
+0dceb04 fixeando
+2dfe5a9 cambiando reademe
+68a0624 sacando archivos que estaban mal
+966142a comentarios y actualizacion del readme
+0421dcc comentarios en el frontend
+cddad37 modificacion en el App.jsx
+e7c948e sacando archivos demas
+21313c1 cambio de datos preestrablecidos paara que se carguen solo cuando cargo el word a transformar y reorganizacion de archivos
+734573f cambio de datos preestrablecidos paara que se carguen solo cuando cargo el word a transformar y reorganizacion de archivos
+446ea08 renombramiento de carpeta frontend y algunos cambio
+c3c0152 se migro de vanilla a react
+dcfb971 integracion bck front
+d899698 separacion de carpetas front end backend
+ceafa24 se mejora la logica de conversion del xml jats
+abb1c62 eliminando archivos
+ef88a75 sacando archivos de mas
+0e61cde aumento del tamaño del titulo
+f9283d0 actualizar el generar pdf
+1a5f3eb alinear XML JATS generado con referencia corrigiendo ORCID/autores, aff3+emails, pub-date/history/volume/elocation/ref-count, normalización de guiones, eliminación de Brasil.. y ajuste de indentación en nodos clave
+7e2126b se intento aumentar la correcta formacion  de los metadatos
+c298948 Refactor buildJatsXml() to use tab indentation matching pattern.xml
+5383c63 mejorar parser de autores y alinear wrapper xml con patrón de producción
+d9b0979 modificaciones
+b13670a generando pdf documentacion
+c592dc9 cambios
+046540a falta solo un poco para terminar de parsear los datos
+067440f error al subtir el pdf , intentanto llegar al xml-jats
+438fefa fix: mejorar extracción de DOI y separar metadatos ISSN/DOI
+dac6853 first commit
