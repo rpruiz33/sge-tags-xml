@@ -1677,9 +1677,8 @@ $meta = [
         // (formato tipo 6032). Los documentos con cabecera (tipo 5939) no llevan <bio>.
         $meta['includeBio'] = empty($meta['hasHeaderBlock']);
 
-        // Completa datos editoriales conocidos por DOI cuando el DOCX no los trae en texto visible.
+        // Deriva elocation-id, collectionYear, volume y limpia ORCIDs desde datos ya detectados.
         $meta = $this->applyKnownFrontMetadata($meta);
-        $meta = $this->applyKnownFrontMetadata6032($meta);
 
         // Si el DOCX no traía cabecera, completa datos fijos de la revista Salud Colectiva.
         $meta = $this->applySaludColectivaDefaults($meta);
@@ -1718,135 +1717,84 @@ $meta = [
         return $meta;
     }
 
-    // Declara el método applyKnownFrontMetadata de la clase.
-    private function applyKnownFrontMetadata(array $meta)
-    // Abre un nuevo bloque de código.
+    /**
+     * COMPLETADO GENÉRICO DE METADATOS EDITORIALES:
+     * Deriva datos que el parser no pudo leer directamente del DOCX usando
+     * únicamente información ya presente en $meta (DOI, fechas detectadas,
+     * ORCIDs detectados). No hardcodea valores por artículo.
+     *
+     * Reglas aplicadas:
+     *  1. elocation-id  → último segmento numérico del DOI  (e.g. 10.18294/sc.2026.5939 → e5939)
+     *  2. collectionYear → año de la fecha de aceptación, o del pubdate, o del DOI
+     *  3. volume        → para Salud Colectiva se calcula como (año_colección - 2004)
+     *                     (vol 1 = 2005, vol 22 = 2026, …)
+     *  4. ORCIDs        → ya detectados por el parser; aquí solo se limpian fragmentos
+     *                     de URL que hayan quedado pegados al ID
+     *  5. emails        → ya detectados por el parser; no se agregan valores inventados
+     *  6. articleIdOther→ ya detectado vía "ID: XXXXX" en el texto; no se inventa
+     */
+    private function applyKnownFrontMetadata(array $meta): array
     {
-        // Normaliza el DOI para poder comparar sin importar mayúsculas o espacios.
-        $doi = mb_strtolower(trim((string)($meta['doi'] ?? '')), 'UTF-8');
-
-        // Si no es el artículo 5939, devuelve los metadatos tal como fueron detectados.
-        if ($doi !== '10.18294/sc.2026.5939') {
-            // Devuelve el resultado final de esta parte del proceso.
-            return $meta;
-        }
-
-        // Define los ORCID esperados para los autores detectados en este DOI.
-        $orcidByName = [
-            'melisse eich' => '0000-0001-8382-1354',
-            'marta verdi' => '0000-0001-7090-9541',
-            'pedro paulo scremin martins' => '0000-0003-2641-8563',
-            'mirelle finkler' => '0000-0001-5764-9183',
-        ];
-
-        // Recorre los autores detectados y completa ORCID sólo cuando falta.
-        foreach (($meta['authors'] ?? []) as $i => $author) {
-            // Normaliza el nombre para buscarlo en el mapa interno.
-            $nameKey = mb_strtolower(trim(preg_replace('/\s+/u', ' ', (string)($author['name'] ?? ''))), 'UTF-8');
-            // Si el autor está en el mapa y todavía no tiene ORCID, lo completa.
-            if (($meta['authors'][$i]['orcid'] ?? '') === '' && isset($orcidByName[$nameKey])) {
-                // Guarda el ORCID que corresponde al autor.
-                $meta['authors'][$i]['orcid'] = $orcidByName[$nameKey];
-            }
-        }
-
-        // Define los correos esperados por posición de afiliación para este DOI.
-        $emailsByAffIndex = [
-            0 => 'meliseeich@hotmail.com',
-            1 => 'verdiufsc@gmail.com',
-            2 => 'ppsm29@hotmail.com',
-            3 => 'mirellefinkler@yahoo.com.br',
-        ];
-
-        // Recorre las afiliaciones y agrega el correo faltante sin duplicarlo.
-        foreach (($meta['affiliations'] ?? []) as $i => $affiliation) {
-            // Si existe un correo conocido para esta afiliación, lo usa como respaldo.
-            if (isset($emailsByAffIndex[$i]) && empty($meta['affiliations_email'][$i])) {
-                // Guarda el correo que después se escribirá en <email>.
-                $meta['affiliations_email'][$i] = $emailsByAffIndex[$i];
-            }
-        }
-
-        // Si el DOCX no trae fecha de publicación visible, usa la fecha editorial del DOI 5939.
-        if (empty($meta['pubdate'])) {
-            // Guarda día, mes y año de publicación electrónica.
-            $meta['pubdate'] = '11 03 2026';
-        }
-
-        // Si no se detectó año de colección, lo toma de la publicación.
-        if (empty($meta['collectionYear'])) {
-            // Guarda el año de colección.
-            $meta['collectionYear'] = '2026';
-        }
-
-        // Si no se detectó volumen, completa el volumen del artículo.
-        if (empty($meta['volume'])) {
-            // Guarda el volumen.
-            $meta['volume'] = '22';
-        }
-
-        // Si no se detectó elocation-id, lo deriva del último segmento numérico del DOI.
+        // ── 1. elocation-id derivado del DOI ────────────────────────────────────
         if (empty($meta['elocation-id'])) {
-            $doiFallback = $meta['doi'] ?? '';
-            if ($doiFallback !== '' && preg_match('/\.(\d+)$/', $doiFallback, $mDoi)) {
-                // Guarda el identificador electrónico derivado del DOI (e.g. 10.18294/sc.2026.6032 → e6032).
+            $doiVal = trim((string)($meta['doi'] ?? ''));
+            if ($doiVal !== '' && preg_match('/\.(\d+)$/u', $doiVal, $mDoi)) {
                 $meta['elocation-id'] = 'e' . $mDoi[1];
-            } else {
-                // Guarda el identificador electrónico.
-                $meta['elocation-id'] = 'e5939';
             }
         }
 
-        // Completa las fechas de historial si el DOCX no las entregó al parser.
-        if (empty($meta['received'])) {
-            // Guarda la fecha de recepción.
-            $meta['received'] = '06 09 2025';
-        }
-        if (empty($meta['revised'])) {
-            // Guarda la fecha de versión final o revisión.
-            $meta['revised'] = '23 12 2025';
-        }
-        if (empty($meta['accepted'])) {
-            // Guarda la fecha de aceptación.
-            $meta['accepted'] = '25 02 2026';
+        // ── 2. collectionYear derivado de fechas ya detectadas ───────────────────
+        if (empty($meta['collectionYear'])) {
+            // Preferir el año de aceptación, luego pubdate, luego el DOI.
+            $yearSources = [
+                $meta['accepted']       ?? '',
+                $meta['pubdate']        ?? '',
+                $meta['revised']        ?? '',
+                $meta['received']       ?? '',
+            ];
+            foreach ($yearSources as $dateStr) {
+                $parts = preg_split('/\s+/', trim($dateStr));
+                $yearCandidate = end($parts);
+                if (preg_match('/^(19|20)\d{2}$/', $yearCandidate)) {
+                    $meta['collectionYear'] = $yearCandidate;
+                    break;
+                }
+            }
+            // Último recurso: extraer el año del DOI (e.g. 10.18294/sc.2026.5939 → 2026)
+            if (empty($meta['collectionYear'])) {
+                $doiVal = trim((string)($meta['doi'] ?? ''));
+                if (preg_match('/\.((?:19|20)\d{2})\./u', $doiVal, $mYear)) {
+                    $meta['collectionYear'] = $mYear[1];
+                }
+            }
         }
 
-        // Devuelve los metadatos enriquecidos para construir el <front>.
-        return $meta;
-    }
-
-    // Aplica metadatos conocidos para el artículo 6032 (Perner et al.).
-    private function applyKnownFrontMetadata6032(array $meta)
-    {
-        $doi = mb_strtolower(trim((string)($meta['doi'] ?? '')), 'UTF-8');
-        if ($doi !== '10.18294/sc.2026.6032') {
-            return $meta;
+        // ── 3. volume calculado para revistas con inicio conocido ────────────────
+        // Solo cuando no se detectó volumen en el texto y hay año de colección.
+        if (empty($meta['volume']) && !empty($meta['collectionYear'])) {
+            $doi = mb_strtolower(trim((string)($meta['doi'] ?? '')), 'UTF-8');
+            // Salud Colectiva: vol 1 = año 2005  →  vol = año - 2004
+            if (strpos($doi, '10.18294/sc') === 0) {
+                $vol = (int)$meta['collectionYear'] - 2004;
+                if ($vol >= 1 && $vol <= 999) {
+                    $meta['volume'] = (string)$vol;
+                }
+            }
         }
 
-        // ORCID conocidos para los autores de este artículo.
-        $orcidByName = [
-            'serena perner'       => '0000-0002-4574-8974',
-            'hugo spinelli'       => '0000-0001-5021-6377',
-            'viviana martinovich' => '0000-0002-2985-1000',
-            'marcio alazraqui'    => '0000-0001-9604-3531',
-        ];
+        // ── 4. Limpiar fragmentos de URL que hayan quedado en los ORCIDs ─────────
+        // El parser a veces captura "https://orcid.org/0000-0001-XXXX" completo.
         foreach (($meta['authors'] ?? []) as $i => $author) {
-            $nameKey = mb_strtolower(trim(preg_replace('/\\s+/u', ' ', (string)($author['name'] ?? ''))), 'UTF-8');
-            if (($meta['authors'][$i]['orcid'] ?? '') === '' && isset($orcidByName[$nameKey])) {
-                $meta['authors'][$i]['orcid'] = $orcidByName[$nameKey];
+            $orcid = (string)($author['orcid'] ?? '');
+            if ($orcid !== '') {
+                // Normalizar: extraer solo el ID si viene con URL completa.
+                if (preg_match('/orcid\.org\/([0-9X\-]{16,19})/i', $orcid, $mOrcid)) {
+                    $meta['authors'][$i]['orcid'] = $mOrcid[1];
+                }
+                // Eliminar espacios o puntos finales espurios.
+                $meta['authors'][$i]['orcid'] = trim(rtrim($meta['authors'][$i]['orcid'], '.'));
             }
         }
-
-        // Fechas editoriales del artículo 6032.
-        if (empty($meta['pubdate']))        $meta['pubdate']        = '15 05 2026';
-        if (empty($meta['collectionYear'])) $meta['collectionYear'] = '2026';
-        if (empty($meta['volume']))         $meta['volume']         = '22';
-        if (empty($meta['received']))       $meta['received']       = '14 11 2025';
-        if (empty($meta['revised']))        $meta['revised']        = '29 04 2026';
-        if (empty($meta['accepted']))       $meta['accepted']       = '07 05 2026';
-
-        // articleIdOther conocido.
-        if (empty($meta['articleIdOther'])) $meta['articleIdOther'] = '00600';
 
         return $meta;
     }
@@ -2022,11 +1970,6 @@ $meta = [
                     // Prepara $affOriginal con el valor que se usará después.
                     $affOriginal = rtrim($affOriginal, " ;") . '. ' . $affEmail;
                 }
-            }
-            // Si la afiliación tiene correo, prepara el valor de $affOriginal para usarlo dentro del bloque.
-            if ($n === 4 && $affEmail !== '' && stripos($affEmail, 'mirellefinkler@yahoo.com.br') !== false) {
-                // Prepara $affOriginal con el valor que se usará después.
-                $affOriginal = rtrim($affOriginal) . ' ';
             }
             // Para documentos sin cabecera (tipo 6032), asegurar espacio final en la afiliación original.
             if (empty($meta['hasHeaderBlock']) && substr($affOriginal, -1) !== ' ') {
@@ -2677,36 +2620,6 @@ $meta = [
         }
         $content = preg_replace('/\s+([\.,;:\)])/u', '$1', $content);
         $content = preg_replace('/([\(\[]+)\s+/u', '$1', $content);
-        $content = str_replace(
-            'camino de pensamiento”<xref ref-type="bibr" rid="B23"><sup>23</sup></xref>',
-            'camino de pensamiento<sup>”(</sup><xref ref-type="bibr" rid="B23"><sup>23</sup></xref>',
-            $content
-        );
-        $content = str_replace(
-            'fundamental violado”<xref ref-type="bibr" rid="B13"><sup>13</sup></xref> por',
-            'fundamental violado”<xref ref-type="bibr" rid="B13"><sup>13</sup></xref><sup>)</sup> por',
-            $content
-        );
-        $content = str_replace(
-            'se realizó la búsqueda y selección del conjunto documental.',
-            'se realizó la búsqueda y selección del conjunto documental. ',
-            $content
-        );
-        $content = str_replace(
-            'las discusiones en las subsecciones que siguen.',
-            'las discusiones en las subsecciones que siguen. ',
-            $content
-        );
-        $content = str_replace(
-            'Lara y Filho afirman que:',
-            'Lara y Filho afirman que: ',
-            $content
-        );
-        $content = str_replace(
-            'Justificación del Proyecto de Ley N° 580 de 2020)',
-            'Justificación del Proyecto de Ley N° 580 de 2020) ',
-            $content
-        );
 
         // Si después de procesar el contenido queda vacío (ej. solo espacios, NBSPs o etiquetas vacías),
         // no generar un párrafo vacío en el XML — devolver cadena vacía para que el caller lo ignore.
@@ -2751,9 +2664,6 @@ $meta = [
         $displaySource = $displayUrl === null ? (string) $url : (string) $displayUrl;
         $displaySource = str_replace("\xc2\xa0", ' ', $displaySource);
         $display = rtrim($displaySource, '.');
-        if (strpos($href, 'https://tinyurl.com/55ru4w6b') === 0 && substr($display, -1) !== ' ') {
-            $display .= ' ';
-        }
         $display = htmlspecialchars($display, ENT_QUOTES | ENT_XML1, 'UTF-8');
         $safePrefix = htmlspecialchars($prefix, ENT_QUOTES | ENT_XML1, 'UTF-8');
         return "<comment>{$safePrefix}<ext-link ext-link-type=\"uri\" xlink:href=\"$href\">$display</ext-link>\r\n\t\t\t\t\t</comment>";
@@ -2873,18 +2783,6 @@ $meta = [
             $cleanRef
         );
 
-        if (preg_match('/^Ruz H\./u', $cleanRef)) {
-            $forcedPubType = 'journal';
-        } elseif (preg_match('/^Colombia, Ministerio de Salud y Protección Social\. Resolución 1216 de 2015/u', $cleanRef)) {
-            $forcedPubType = 'webpage';
-            $forcedUrl = 'https://tinyurl.com/376twe6y';
-        } elseif (preg_match('/^Brasil, Senado Federal\. Projeto de Lei do Senado n\. 149, de 2018/u', $cleanRef)) {
-            $forcedPubType = 'book';
-            $isSpecialLegislativeBook = true;
-        } elseif (preg_match('/^Minayo MCS\./u', $cleanRef)) {
-            $forcedPubType = 'book';
-        }
-
         $isWebpage = $hasUrl && stripos($cleanRef, '[Internet]') !== false && !$isSpecialLegislativeBook;
         $isJournal = !$isWebpage && (
             preg_match('/\b(Revista|Journal|Annals|Interface|Saúde|Salud|Cuadernos|Trayectorias|Holos|Cadernos)\b/iu', $cleanRef)
@@ -2909,9 +2807,6 @@ $meta = [
                 $commentPrefix = $pm[1];
             }
             $displaySource = rtrim(str_replace("\xc2\xa0", ' ', $rawU), '.');
-            if (strpos($safeU, 'https://tinyurl.com/55ru4w6b') === 0 && substr($displaySource, -1) !== ' ') {
-                $displaySource .= ' ';
-            }
             $displayU = htmlspecialchars($displaySource, ENT_QUOTES | ENT_XML1, 'UTF-8');
             $commentBlock = "<comment>" . htmlspecialchars($commentPrefix, ENT_QUOTES | ENT_XML1, 'UTF-8') . "<ext-link ext-link-type=\"uri\" xlink:href=\"$safeU\">$displayU</ext-link>\r\n\t\t\t\t\t</comment>";
             $mixedText = preg_replace(
