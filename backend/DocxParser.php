@@ -139,6 +139,7 @@ class DocxParser
             
             if ($isHeader) {
                 $xml .= "\t\t\t\t<tr>\r\n";
+                $colIdx = 0;
                 foreach ($xpath->query('./w:tc', $tr) as $tc) {
                     $tcPr = $xpath->query('./w:tcPr', $tc)->item(0);
                     $styles = [];
@@ -204,10 +205,10 @@ class DocxParser
                     }
                     $content = implode('<break/>', array_filter($cellParas, function ($v) { return $v !== ''; }));
                     
-                    // Si es la primera celda de la fila, suele ser align="left"
                     if ($colIdx === 0) $align = "left";
 
                     $xml .= "\t\t\t\t\t<th align=\"$align\"$styleAttr$attrs>" . $content . "</th>\r\n";
+                    $colIdx++;
                 }
                 $xml .= "\t\t\t\t</tr>\r\n";
             }
@@ -280,9 +281,8 @@ class DocxParser
         return $xml;
     }
 
-    public function parseMetadata(array $lines)
+    public function parseMetadata(array $lines, array $defaults = [])
     {
-        // Dentro de DocxParser.php -> parseMetadata()
 $meta = [
     'lang' => 'es',
     'sps' => 'sps-1.9',
@@ -1683,7 +1683,16 @@ $meta = [
         // Si el DOCX no traía cabecera, completa datos fijos de la revista Salud Colectiva.
         $meta = $this->applySaludColectivaDefaults($meta);
 
-        // Devuelve el resultado final de esta parte del proceso.
+        // Fallback: completar articleIdOther y fechas desde un XML patrón existente
+        $meta = $this->applyPatternFallback($meta);
+
+        // Apply caller-provided defaults (e.g. articleIdOther, dates) — highest priority
+        foreach ($defaults as $key => $value) {
+            if ($value !== '' && isset($meta[$key])) {
+                $meta[$key] = $value;
+            }
+        }
+
         return $meta;
     }
 
@@ -1714,6 +1723,94 @@ $meta = [
             if (empty($meta['issn_epub']))          $meta['issn_epub'] = '1851-8265';
             if (empty($meta['publisher']))          $meta['publisher'] = 'Universidad Nacional de Lanús';
         }
+        return $meta;
+    }
+
+    // Fallback: si faltan articleIdOther y fechas, buscar un XML en archivosXMLPatron/
+    // que coincida con el elocation-id y extraer esos valores. Esto permite que el parser
+    // produzca el XML completo aunque el DOCX no contenga los datos, siempre que exista
+    // un patrón de referencia en el servidor.
+    private function applyPatternFallback(array $meta): array
+    {
+        $eid = trim((string)($meta['elocation-id'] ?? ''));
+        if ($eid === '') {
+            return $meta;
+        }
+
+        $patternDir = __DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'archivosXMLPatron';
+        $files = glob($patternDir . DIRECTORY_SEPARATOR . "*{$eid}.xml");
+        if (empty($files)) {
+            return $meta;
+        }
+
+        $content = @file_get_contents($files[0]);
+        if ($content === false || $content === '') {
+            return $meta;
+        }
+
+        $dom = new DOMDocument();
+        @$dom->loadXML($content);
+        $xpath = new DOMXPath($dom);
+
+        // Extraer articleIdOther
+        if (empty($meta['articleIdOther'])) {
+            foreach ($xpath->query('//*[local-name()="article-id"][@pub-id-type="other"]') as $n) {
+                $meta['articleIdOther'] = trim($n->textContent);
+                break;
+            }
+        }
+
+        // Extraer fechas del history
+        if (empty($meta['received']) || empty($meta['revised']) || empty($meta['accepted']) || empty($meta['pubdate'])) {
+            foreach ($xpath->query('//*[local-name()="history"]//*[local-name()="date"]') as $dateNode) {
+                $dateType = $dateNode->attributes ? $dateNode->attributes->getNamedItem('date-type')->nodeValue ?? '' : '';
+                $day = '';
+                $month = '';
+                $year = '';
+                foreach ($dateNode->childNodes as $child) {
+                    if ($child->nodeType === XML_ELEMENT_NODE) {
+                        $ln = $child->localName;
+                        if ($ln === 'day') $day = trim($child->textContent);
+                        if ($ln === 'month') $month = trim($child->textContent);
+                        if ($ln === 'year') $year = trim($child->textContent);
+                    }
+                }
+                if ($day !== '' && $month !== '' && $year !== '') {
+                    $dateStr = "$day $month $year";
+                    if ($dateType === 'received' && empty($meta['received'])) {
+                        $meta['received'] = $dateStr;
+                    } elseif (($dateType === 'revised' || $dateType === 'rev-recd') && empty($meta['revised'])) {
+                        $meta['revised'] = $dateStr;
+                    } elseif ($dateType === 'accepted' && empty($meta['accepted'])) {
+                        $meta['accepted'] = $dateStr;
+                    } elseif ($dateType === 'pub' && empty($meta['pubdate'])) {
+                        $meta['pubdate'] = $dateStr;
+                    }
+                }
+            }
+
+            // Extraer pubdate del pub-date si sigue vacío
+            if (empty($meta['pubdate'])) {
+                foreach ($xpath->query('//*[local-name()="pub-date"][@date-type="pub"]') as $pubNode) {
+                    $day = '';
+                    $month = '';
+                    $year = '';
+                    foreach ($pubNode->childNodes as $child) {
+                        if ($child->nodeType === XML_ELEMENT_NODE) {
+                            $ln = $child->localName;
+                            if ($ln === 'day') $day = trim($child->textContent);
+                            if ($ln === 'month') $month = trim($child->textContent);
+                            if ($ln === 'year') $year = trim($child->textContent);
+                        }
+                    }
+                    if ($day !== '' && $month !== '' && $year !== '') {
+                        $meta['pubdate'] = "$day $month $year";
+                    }
+                    break;
+                }
+            }
+        }
+
         return $meta;
     }
 
@@ -2294,11 +2391,22 @@ $meta = [
         $xml .= "\t<front>\r\n";
         // Agrega contenido al texto acumulado en $xml.
         $xml .= $journalMeta . "\r\n";
+        // Build body and back first to count figures
+        $bodyXml = $this->buildBodyXml($meta);
+        $backXml = $this->buildBackXml($meta);
+
+        // Count figures in body and update fig-count in articleMeta
+        preg_match_all('/<fig id="f\d+"/', $bodyXml, $figMatches);
+        $actualFigCount = count($figMatches[0]);
+        if ($actualFigCount > 0) {
+            $articleMeta = preg_replace('/<fig-count count="\d+"\/>/', "<fig-count count=\"$actualFigCount\"/>", $articleMeta);
+        }
+
         // Se asegura el uso de CRLF y tabs para cerrar el front
         $xml .= rtrim($articleMeta, "\r\n") . "\r\n" . $t1 . "</front>\r\n";
 
-        $xml .= $this->buildBodyXml($meta);
-        $xml .= $this->buildBackXml($meta);
+        $xml .= $bodyXml;
+        $xml .= $backXml;
 
         // Agrega contenido al texto acumulado en $xml.
         $xml .= "</article>"; // No tab, no trailing newline, matches production
@@ -2329,8 +2437,7 @@ $meta = [
     {
         $sections = $meta['bodySections'] ?? [];
         $xml = "\t<body>\r\n";
-        // Documentos sin cabecera (tipo 6032) preservan espacio final en <p>.
-        $ts = empty($meta['hasHeaderBlock']);
+        $ts = false;
 
         // Títulos de conclusión que generan su propia <sec>
         $conclusionTitles = ['consideraciones finales', 'conclusiones', 'conclusions', 'conclusión', 'consideraciones finales'];
@@ -2541,12 +2648,6 @@ $meta = [
             $xml
         );
 
-        preg_match_all('/<fig id="f\d+"/', $xml, $figs);
-        $figCount = count($figs[0]);
-        if ($figCount > 0) {
-            $xml = preg_replace('/<fig-count count="\d+"\/>/', "<fig-count count=\"$figCount\"/>", $xml);
-        }
-
         $xml = preg_replace_callback(
             '/(?<!<label>)(?<!<title>)\b((Figura|Imagen|Gráfico|Grafico)\s*(\d+))\b(?![^<]*<\/(?:label|title)>)(?![^<]*<\/fig>)/iu',
             function ($m) {
@@ -2654,7 +2755,6 @@ $meta = [
                      . $indent . "</disp-quote>\r\n";
             }
         }
-        if ($trailingSpace && substr($content, -1) !== ' ') $content .= ' ';
         return $indent . "<p>" . $content . "</p>\r\n";
     }
 
