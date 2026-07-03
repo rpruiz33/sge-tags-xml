@@ -1107,20 +1107,24 @@ class FrontParser
         if (strpos($doi, '10.18294/sc') !== 0) {
             return $meta;
         }
+
+        require_once __DIR__ . '/../PatternTemplateEngine.php';
+        $engine = new PatternTemplateEngine();
+        $defaults = $engine->getDefaults();
+
+        $fields = ['journalTitle', 'journalAbbrev', 'journalIdPublisher', 'issn_ppub', 'issn_epub', 'publisher'];
         if (empty($meta['hasHeaderBlock'])) {
-            $meta['journalTitle']       = 'Salud Colectiva';
-            $meta['journalAbbrev']      = 'Salud Colect';
-            $meta['journalIdPublisher'] = 'scol';
-            $meta['issn_ppub']          = '1669-2381';
-            $meta['issn_epub']          = '1851-8265';
-            $meta['publisher']          = 'Universidad Nacional de Lanús';
+            foreach ($fields as $f) {
+                if (isset($defaults[$f]) && $defaults[$f] !== '') {
+                    $meta[$f] = $defaults[$f];
+                }
+            }
         } else {
-            if (empty($meta['journalTitle']))       $meta['journalTitle'] = 'Salud Colectiva';
-            if (empty($meta['journalAbbrev']))      $meta['journalAbbrev'] = 'Salud Colect';
-            if (empty($meta['journalIdPublisher'])) $meta['journalIdPublisher'] = 'scol';
-            if (empty($meta['issn_ppub']))          $meta['issn_ppub'] = '1669-2381';
-            if (empty($meta['issn_epub']))          $meta['issn_epub'] = '1851-8265';
-            if (empty($meta['publisher']))          $meta['publisher'] = 'Universidad Nacional de Lanús';
+            foreach ($fields as $f) {
+                if (empty($meta[$f]) && isset($defaults[$f]) && $defaults[$f] !== '') {
+                    $meta[$f] = $defaults[$f];
+                }
+            }
         }
         return $meta;
     }

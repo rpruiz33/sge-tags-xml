@@ -13,6 +13,7 @@ ini_set('display_errors', '0');
 // Carga la clase DocxParser, que contiene la lógica para leer DOCX, extraer metadatos y armar XML JATS.
 require_once __DIR__ . '/DocxParser.php';
 require_once __DIR__ . '/JatsRichParser.php';
+require_once __DIR__ . '/PatternTemplateEngine.php';
 
 // Agrupa todo el proceso de conversión para poder capturar cualquier error y responderlo como JSON.
 try {
@@ -55,8 +56,19 @@ try {
             $jparser = new JatsRichParser();
             $xml = $jparser->mergeMetaIntoOriginalXml($meta['originalXml'], $meta);
         } else {
-            $parser = new DocxParser('');
-            $xml = $parser->buildJatsXml($meta);
+            // Intentar usar archivo patrón como template
+            $engine = new PatternTemplateEngine();
+            $patternFile = $engine->findPatternFile($meta['elocation-id'] ?? '');
+            if ($patternFile) {
+                $bodyParser = new BodyParser();
+                $backParser = new BackParser();
+                $bodyXml = $bodyParser->buildBodyXml($meta);
+                $backXml = $backParser->buildBackXml($meta);
+                $xml = $engine->generateXml($patternFile, $meta, $bodyXml, $backXml);
+            } else {
+                $parser = new DocxParser('');
+                $xml = $parser->buildJatsXml($meta);
+            }
         }
 
         $safe = $sanitize_filename($payload['filename'] ?? 'documento');
@@ -107,8 +119,19 @@ try {
         // Analiza esas líneas para detectar DOI, títulos, autores, afiliaciones, fechas y otros metadatos.
         $meta = $parser->parseMetadata($lines);
 
-        // Construye el XML JATS usando los metadatos detectados.
-        $xml = $parser->buildJatsXml($meta);
+        // Intentar usar archivo patrón como template
+        $engine = new PatternTemplateEngine();
+        $patternFile = $engine->findPatternFile($meta['elocation-id'] ?? '');
+        if ($patternFile) {
+            $bodyParser = new BodyParser();
+            $backParser = new BackParser();
+            $bodyXml = $bodyParser->buildBodyXml($meta);
+            $backXml = $backParser->buildBackXml($meta);
+            $xml = $engine->generateXml($patternFile, $meta, $bodyXml, $backXml);
+        } else {
+            // Construye el XML JATS usando los metadatos detectados.
+            $xml = $parser->buildJatsXml($meta);
+        }
     }
 
     // Envía una respuesta exitosa al frontend con el XML generado, los metadatos y el nombre base del archivo.

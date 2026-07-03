@@ -51,7 +51,7 @@ class BackParser
         return $xml;
     }
 
-    private function buildReferenceXmlBlock($num, $cleanRef)
+    public function buildReferenceXmlBlock($num, $cleanRef)
     {
         $monthMapAcc = ['ene'=>'01','jan'=>'01','feb'=>'02','mar'=>'03','abr'=>'04','apr'=>'04',
                         'may'=>'05','jun'=>'06','jul'=>'07','ago'=>'08','aug'=>'08',
